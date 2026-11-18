@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>GenClash · Batallas Pokémon por generación</title>
+  <meta name="description" content="Elige una generación, recibe un equipo aleatorio y pelea por turnos. Datos de la PokeAPI, ranking en Supabase." />
+  <meta name="theme-color" content="#1d2142" />
+  <link rel="icon" href="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600;700&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <!-- Cliente oficial de Supabase (expone window.supabase) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="barra">
+    <button class="marca" data-ir="inicio" aria-label="Ir al inicio">
+      <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" alt="" width="30" height="30" />
+      <span>GenClash</span>
+    </button>
+    <nav class="barra-acciones">
+      <span class="conexion" id="conexion" title="Estado de la base de datos"></span>
+      <button class="btn-icono" id="btnQR" aria-label="Mostrar código QR">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM5 5v3h3V5zM14 3h7v7h-7zm2 2v3h3V5zM3 14h7v7H3zm2 2v3h3v-3zM14 14h3v3h-3zM18 18h3v3h-3zM17 14h4v2h-4zM14 18h2v3h-2z"/></svg>
+        <span>QR</span>
+      </button>
+      <button class="btn-icono" id="btnSonido" aria-label="Activar o silenciar sonido">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="ico-on"><path d="M4 9h4l5-4v14l-5-4H4zM16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="ico-off"><path d="M4 9h4l5-4v14l-5-4H4zM17 9l5 6M22 9l-5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </nav>
+  </header>
+
+  <main id="contenido">
+    <!-- ======================= INICIO ======================= -->
+    <section class="pantalla activa" id="pantalla-inicio" aria-labelledby="titulo-inicio">
+      <div class="intro">
+        <h1 id="titulo-inicio">Elige una generación.<br />Pelea con lo que te toque.</h1>
+        <p class="bajada">Cada partida arma dos equipos al azar desde la PokeAPI, con movimientos, tipos y estadísticas reales. Gana y entra al ranking.</p>
+      </div>
+
+      <form class="config" id="formJugar" autocomplete="off">
+        <label class="campo">
+          <span>Tu nombre de entrenador</span>
+          <input id="inputNombre" name="nombre" maxlength="20" minlength="2" required placeholder="Ej. Efraín" />
+        </label>
+        <fieldset class="campo tamano">
+          <legend>Tamaño del equipo</legend>
+          <label><input type="radio" name="tamano" value="3" /><span>3 vs 3</span></label>
+          <label><input type="radio" name="tamano" value="6" checked /><span>6 vs 6</span></label>
+        </fieldset>
+        <p class="record" id="record" aria-live="polite"></p>
+      </form>
+
+      <h2 class="titulo-seccion" id="titulo-estante">¿De qué generación serán los equipos?</h2>
+      <div class="estante" id="estante" role="radiogroup" aria-labelledby="titulo-estante"></div>
+
+      <div class="cta-fija">
+        <button class="btn-primario" id="btnBuscar" form="formJugar" type="submit">
+          <span id="txtBuscar">Buscar partida</span>
+        </button>
+      </div>
+
+      <div class="tablero">
+        <section class="panel" aria-labelledby="t-ranking">
+          <h2 id="t-ranking">Ranking</h2>
+          <ol class="ranking" id="ranking"><li class="vacio">Cargando…</li></ol>
+        </section>
+        <section class="panel" aria-labelledby="t-vivo">
+          <h2 id="t-vivo"><span class="punto-vivo" aria-hidden="true"></span>Batallas recientes</h2>
+          <ul class="recientes" id="recientes"><li class="vacio">Cargando…</li></ul>
+        </section>
+        <section class="panel panel-stats" aria-labelledby="t-stats">
+          <h2 id="t-stats">En números</h2>
+          <dl class="stats" id="stats"></dl>
+          <div class="qr-mini">
+            <img id="qrMini" alt="Código QR para abrir el juego" width="96" height="96" />
+            <p>Escanéalo y juega desde tu celular.</p>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ======================= BÚSQUEDA ======================= -->
+    <section class="pantalla" id="pantalla-busqueda" aria-live="polite">
+      <div class="busqueda">
+        <img class="ball-gira" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" alt="" width="64" height="64" />
+        <h2 id="busquedaTitulo">Buscando rival…</h2>
+        <p id="busquedaDetalle">Conectando con la PokeAPI</p>
+        <div class="progreso" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="barraProgreso"><div></div></div>
+        <div class="desfile" id="desfile" aria-hidden="true"></div>
+        <p class="tip" id="tip"></p>
+        <button class="btn-texto" id="btnCancelarBusqueda">Cancelar</button>
+      </div>
+    </section>
+
+    <!-- ======================= VISTA PREVIA ======================= -->
+    <section class="pantalla" id="pantalla-preview" aria-labelledby="t-preview">
+      <div class="preview">
+        <h2 id="t-preview" class="vs-titulo"><span id="pvJugador"></span><b>vs</b><span id="pvRival"></span></h2>
+        <p class="pv-gen" id="pvGen"></p>
+        <div class="pv-equipos">
+          <div>
+            <h3>Tu equipo</h3>
+            <ul class="pv-lista" id="pvEquipoJ"></ul>
+          </div>
+          <div>
+            <h3 id="pvTituloRival">Equipo rival</h3>
+            <ul class="pv-lista rival" id="pvEquipoR"></ul>
+          </div>
+        </div>
+        <p class="ayuda">Toca un Pokémon para ver sus estadísticas y movimientos.</p>
+        <div class="pv-acciones">
+          <button class="btn-secundario" id="btnRearmar">Otro equipo</button>
+          <button class="btn-primario" id="btnComenzar">Comenzar batalla</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= BATALLA ======================= -->
+    <section class="pantalla" id="pantalla-batalla" aria-label="Batalla">
+      <div class="batalla">
+        <div class="escenario">
+          <div class="arena" id="arena">
+            <div class="cielo"></div>
+            <div class="nubes" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="colinas"></div>
+            <div class="suelo"></div>
+            <div class="plataforma p-rival"></div>
+            <div class="plataforma p-jugador"></div>
+            <div class="slot slot-rival" id="slotRival"><img class="sprite" alt="" /></div>
+            <div class="slot slot-jugador" id="slotJugador"><img class="sprite" alt="" /></div>
+            <div class="hpbox hp-rival" id="hpRival"></div>
+            <div class="hpbox hp-jugador" id="hpJugador"></div>
+            <div class="fx" id="fx" aria-hidden="true"></div>
+            <span class="turno-chip" id="turnoChip">Turno 1</span>
+          </div>
+          <div class="lcd" id="lcd" aria-live="polite"><p id="lcdTexto">…</p></div>
+          <div class="controles" id="controles">
+            <div class="movs" id="movs" role="group" aria-label="Movimientos"></div>
+            <div class="cambios-titulo">
+              <span id="cambiosTitulo">Cambiar de Pokémon</span>
+              <span class="ctrl-extra">
+                <button class="btn-mini" id="btnVelocidad" title="Velocidad de los textos">1×</button>
+                <button class="btn-mini peligro" id="btnRendirse">Rendirse</button>
+              </span>
+            </div>
+            <div class="cambios" id="cambios" role="group" aria-label="Equipo"></div>
+          </div>
+        </div>
+        <aside class="registro" aria-label="Registro de la batalla">
+          <h2>Registro</h2>
+          <ol id="log"></ol>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="pie">
+    <p>Datos y sprites: <a href="https://pokeapi.co" target="_blank" rel="noopener">PokeAPI</a>. Base de datos: <a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a>. Proyecto escolar sin fines de lucro; Pokémon y sus nombres son marcas de Nintendo, Game Freak y The Pokémon Company.</p>
+  </footer>
+
+  <!-- ======================= MODALES ======================= -->
+  <dialog class="modal" id="modalQR" aria-labelledby="t-qr">
+    <form method="dialog"><button class="cerrar" aria-label="Cerrar">×</button></form>
+    <h2 id="t-qr">Escanea para jugar</h2>
+    <img id="qrGrande" alt="Código QR del juego" width="280" height="280" />
+    <p class="qr-url" id="qrUrl"></p>
+    <p class="qr-aviso" id="qrAviso" hidden></p>
+    <div class="fila-botones">
+      <button class="btn-secundario" id="btnCopiar">Copiar enlace</button>
+      <button class="btn-primario" id="btnDescargarQR">Descargar QR</button>
+    </div>
+  </dialog>
+
+  <dialog class="modal modal-info" id="modalInfo" aria-labelledby="t-info">
+    <form method="dialog"><button class="cerrar" aria-label="Cerrar">×</button></form>
+    <div id="infoContenido"></div>
+  </dialog>
+
+  <dialog class="modal modal-resultado" id="modalResultado" aria-labelledby="t-res">
+    <div id="resultadoContenido"></div>
+    <div class="fila-botones">
+      <button class="btn-secundario" id="btnMenu">Cambiar generación</button>
+      <button class="btn-primario" id="btnRevancha">Revancha</button>
+    </div>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>
