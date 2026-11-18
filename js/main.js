@@ -4,13 +4,13 @@
 //  - Modo contra la computadora y modo en línea (jugador vs jugador)
 //  - Batalla animada, ranking y QR
 // ============================================================
-import { GENERACIONES, TODAS, TIPOS, ESTADOS, STATS_ES, STATS_CORTO, CATEGORIAS, NOMBRES_RIVALES, TITULOS_RIVALES, efectividad } from './data.js';
+import { GENERACIONES, TODAS, LEGENDARIOS, TIPOS, ESTADOS, STATS_ES, STATS_CORTO, CATEGORIAS, NOMBRES_RIVALES, TITULOS_RIVALES, efectividad } from './data.js';
 import { armarEquipo, sprites, aleatorio, contadorPeticiones } from './api.js';
 import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCambio, otro, FORCEJEO, fmt, rngConSemilla } from './battle.js';
 import { decidirAccion, mejorReemplazo } from './ai.js';
 import * as db from './db.js';
 import { sfx, grito, alternarSonido, estaSilenciado } from './audio.js';
-import { Efectos } from './fx.js';
+import { Efectos, precargarHojas } from './fx.js';
 import { buscarRival, conectarPresencia } from './online.js';
 import { URL_PUBLICA } from './config.js';
 
@@ -39,9 +39,11 @@ const estado = {
   desconectarPresencia: () => {},
 };
 
-const genActual = () => (estado.gen === 0 ? TODAS : GENERACIONES.find((g) => g.id === estado.gen) || GENERACIONES[0]);
-const etiquetaGen = (g) => (g.id === 0 ? 'Todas las generaciones' : `Gen ${g.romano} (${g.region})`);
-const genPorId = (id) => (id === 0 ? TODAS : GENERACIONES.find((g) => g.id === id) || GENERACIONES[0]);
+const LISTA_GENS = [...GENERACIONES, TODAS, LEGENDARIOS];
+const genPorId = (id) => LISTA_GENS.find((g) => g.id === id) || GENERACIONES[0];
+const genActual = () => genPorId(estado.gen);
+const etiquetaGen = (g) => (g.id === 0 ? 'Todas las generaciones' : g.id === LEGENDARIOS.id ? 'Solo legendarios' : `Gen ${g.romano} (${g.region})`);
+const etiquetaCorta = (g) => (g.id === 0 ? 'Todas' : g.id === LEGENDARIOS.id ? 'Legendarios' : `Gen ${g.romano} (${g.region})`);
 const enPvp = () => estado.modoBatalla === 'pvp';
 
 /** Lado del motor → lado de la pantalla (tu Pokémon siempre abajo a la izquierda). */
@@ -169,10 +171,10 @@ $('#btnSalir').addEventListener('click', async () => {
 function renderEstante() {
   const cont = $('#estante');
   cont.innerHTML = '';
-  for (const g of [...GENERACIONES, TODAS]) {
+  for (const g of LISTA_GENS) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = `cartucho${g.id === 0 ? ' todas' : ''}`;
+    b.className = `cartucho${g.id === 0 ? ' todas' : ''}${g.id === LEGENDARIOS.id ? ' legendario' : ''}`;
     b.setAttribute('role', 'radio');
     b.setAttribute('aria-checked', String(g.id === estado.gen));
     b.setAttribute('aria-label', etiquetaGen(g));
@@ -184,7 +186,7 @@ function renderEstante() {
         ${g.destacados.map((id) => `<img src="${sprites(id).frenteFijo}" alt="" loading="lazy" width="96" height="96" />`).join('')}
       </div>
       <span class="region">${g.id === 0 ? 'Todas' : g.region}</span>
-      <span class="anio">${g.id === 0 ? '1,025 Pokémon' : g.año}</span>`;
+      <span class="anio">${g.id === 0 ? '1,025 Pokémon' : g.id === LEGENDARIOS.id ? `${LEGENDARIOS.lista.length} Pokémon` : g.año}</span>`;
     b.addEventListener('click', () => elegirGen(g.id));
     cont.append(b);
   }
@@ -194,14 +196,14 @@ function renderEstante() {
 function elegirGen(id) {
   estado.gen = id;
   localStorage.setItem('gc:gen', id);
-  $$('.cartucho').forEach((c, i) => c.setAttribute('aria-checked', String([...GENERACIONES, TODAS][i].id === id)));
+  $$('.cartucho').forEach((c, i) => c.setAttribute('aria-checked', String(LISTA_GENS[i].id === id)));
   sfx.click();
   actualizarCTA();
 }
 
 function actualizarCTA() {
   const g = genActual();
-  const donde = g.id === 0 ? 'con todas las generaciones' : `en ${g.region}`;
+  const donde = g.id === 0 ? 'con todas las generaciones' : g.id === LEGENDARIOS.id ? 'solo con legendarios' : `en ${g.region}`;
   $('#txtBuscar').textContent = estado.modo === 'pvp' ? `Buscar rival en línea ${donde}` : `Buscar partida ${donde}`;
 }
 
@@ -212,7 +214,7 @@ $$('input[name=modo]').forEach((r) => r.addEventListener('change', () => {
 // Navegación con flechas dentro del estante (radiogroup)
 $('#estante').addEventListener('keydown', (e) => {
   if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
-  const lista = [...GENERACIONES, TODAS];
+  const lista = LISTA_GENS;
   const i = lista.findIndex((g) => g.id === estado.gen);
   const j = (i + (e.key === 'ArrowRight' ? 1 : -1) + lista.length) % lista.length;
   elegirGen(lista[j].id);
@@ -363,7 +365,7 @@ async function buscarPartida() {
   const g = genActual();
   const tam = estado.tamano;
   estado.rival = `${aleatorio(TITULOS_RIVALES)} ${aleatorio(NOMBRES_RIVALES)}`;
-  pantallaBusqueda(g.id === 0 ? 'Buscando rival en todas las generaciones…' : `Buscando rival en ${g.region}…`, 'Conectando con la PokeAPI');
+  pantallaBusqueda(g.id === 0 ? 'Buscando rival en todas las generaciones…' : g.id === LEGENDARIOS.id ? 'Buscando rival para un duelo de legendarios…' : `Buscando rival en ${g.region}…`, 'Conectando con la PokeAPI');
   const inicio = performance.now();
   try {
     const [eqJ, eqR] = await armarDosEquipos(g, tam, id);
@@ -416,8 +418,8 @@ async function buscarPartidaEnLinea() {
   const tam = estado.tamano;
   cerrarSala();
   pantallaBusqueda(
-    g.id === 0 ? 'Buscando otro entrenador (todas las generaciones)…' : `Buscando otro entrenador en ${g.region}…`,
-    `Esperando a alguien que busque ${tam} contra ${tam} en la misma generación.`,
+    g.id === 0 ? 'Buscando otro entrenador (todas las generaciones)…' : g.id === LEGENDARIOS.id ? 'Buscando otro entrenador para un duelo de legendarios…' : `Buscando otro entrenador en ${g.region}…`,
+    `Esperando a alguien que busque ${tam} contra ${tam} con la misma opción.`,
   );
   const busq = buscarRival({
     gen: g.id, tamano: tam, usuario: estado.usuario,
@@ -1195,7 +1197,7 @@ async function finalizar() {
 
   const r = await db.guardarPartida({
     rival_nombre: estado.rival,
-    generacion: g.id === 0 ? 'Todas' : `Gen ${g.romano} (${g.region})`,
+    generacion: etiquetaCorta(g),
     resultado: gano ? 'victoria' : 'derrota',
     turnos: b.turno,
     restantes,
@@ -1244,6 +1246,7 @@ async function arrancar() {
   }));
   renderEstante();
   prepararQR();
+  precargarHojas();
   db.escucharPartidas((p) => {
     const ul = $('#recientes');
     ul.querySelector('.vacio')?.remove();

@@ -16,6 +16,21 @@ export const GENERACIONES = [
   { id: 9, romano: 'IX',   region: 'Paldea',  año: 2022, ids: [906, 1025], destacados: [908, 937, 1007], tema: ['#d32f2f', '#7e57c2'] },
 ];
 
+/** Legendarios y singulares de todas las generaciones (formas base de la Pokédex nacional). */
+export const LEGENDARIOS = {
+  id: 10, romano: '★', region: 'Legendarios', año: 'Solo legendarios y singulares', destacados: [150, 384, 249], tema: ['#f9d423', '#ff4e50'],
+  lista: [
+    144, 145, 146, 150, 151, 243, 244, 245, 249, 250, 251,
+    377, 378, 379, 380, 381, 382, 383, 384, 385, 386,
+    480, 481, 482, 483, 484, 485, 486, 487, 488, 490, 491, 492, 493,
+    494, 638, 639, 640, 641, 642, 643, 644, 645, 646, 647, 648, 649,
+    716, 717, 718, 719, 720, 721,
+    772, 773, 785, 786, 787, 788, 791, 792, 800, 801, 802, 807, 809,
+    888, 889, 890, 892, 893, 894, 895, 896, 897, 898, 905,
+    1001, 1002, 1003, 1004, 1007, 1008, 1014, 1015, 1016, 1017, 1024, 1025,
+  ],
+};
+
 export const TODAS = { id: 0, romano: '∞', region: 'Todas las generaciones', año: '1996–hoy', ids: [1, 1025], destacados: [25, 448, 6], tema: ['#00bcd4', '#7c4dff'] };
 
 /** Multiplicadores de efectividad: atacante -> { defensor: multiplicador } (solo los distintos de 1). */

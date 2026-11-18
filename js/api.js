@@ -4,7 +4,7 @@
 //  - Límite de peticiones simultáneas
 //  - Arma equipos aleatorios por generación con movimientos reales
 // ============================================================
-import { GENERACIONES, TODAS, MOVIMIENTOS_EXCLUIDOS, ESTADO_PERMITIDOS } from './data.js';
+import { GENERACIONES, TODAS, LEGENDARIOS, MOVIMIENTOS_EXCLUIDOS, ESTADO_PERMITIDOS } from './data.js';
 
 export const API = 'https://pokeapi.co/api/v2';
 const RAW = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites';
@@ -73,6 +73,7 @@ export function obtenerJSON(url) {
 
 // ---------- Generaciones ----------
 export async function idsDeGeneracion(genId) {
+  if (genId === LEGENDARIOS.id) return [...LEGENDARIOS.lista];
   if (genId === 0) {
     const [a, z] = TODAS.ids;
     return Array.from({ length: z - a + 1 }, (_, i) => a + i);

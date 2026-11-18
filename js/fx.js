@@ -34,6 +34,27 @@ const ESTILO = {
   typeless: { c: ['#ffffff', '#e0e0e0', '#9e9e9e', '#616161'], forma: 'estrella', luz: true, sube: 0,  tinte: 'rgba(255,255,255,.08)' },
 };
 
+// ------------------------------------------------------------
+//  Hojas de sprites renderizadas en Blender (assets/fx/<tipo>.webp)
+//  4x4 cuadros de 256 px: explosiones 3D de cada tipo.
+// ------------------------------------------------------------
+const HOJAS = {};
+const TIPOS_HOJA = ['fire', 'electric', 'water', 'ice', 'grass', 'psychic', 'ghost', 'dragon', 'dark',
+  'fighting', 'poison', 'ground', 'rock', 'flying', 'bug', 'steel', 'fairy', 'normal'];
+const LUMINOSOS = new Set(['fire', 'electric', 'psychic', 'dragon', 'ice', 'fairy', 'fighting', 'normal', 'water', 'steel']);
+
+/** Descarga las hojas en segundo plano. Si alguna falla, se usan solo partículas. */
+export function precargarHojas(base = 'assets/fx/') {
+  for (const t of TIPOS_HOJA) {
+    if (HOJAS[t]) continue;
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = `${base}${t}.webp`;
+    HOJAS[t] = img;
+  }
+}
+const hojaLista = (t) => { const i = HOJAS[t === 'typeless' ? 'normal' : t]; return i && i.complete && i.naturalWidth > 0 ? i : null; };
+
 /** Decide la "forma" visual del movimiento a partir de su nombre en inglés y su categoría. */
 export function formaDe(move) {
   const n = move.name || '';
@@ -284,7 +305,36 @@ export class Efectos {
     });
   }
 
+  /** Reproduce la explosión 3D de Blender centrada en (x, y). Devuelve false si la hoja no está cargada. */
+  _hoja(tipo, x, y, tam = 1, dur = 0.8) {
+    const img = hojaLista(tipo);
+    if (!img) return false;
+    const cuadros = 16; const cols = 4; const lado = img.naturalWidth / cols;
+    const esc = this.w / 600 + 0.35;
+    const t = 175 * tam * esc;
+    const rot = rnd(-0.5, 0.5);
+    this._forma(dur, (ctx, k) => {
+      const i = Math.min(cuadros - 1, Math.floor(k * cuadros));
+      const sx = (i % cols) * lado; const sy = Math.floor(i / cols) * lado;
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(rot);
+      ctx.drawImage(img, sx, sy, lado, lado, -t / 2, -t / 2, t, t);
+      if (LUMINOSOS.has(tipo) && k < 0.5) { // brillo extra en los primeros cuadros
+        ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.35 * (1 - k * 2);
+        ctx.drawImage(img, sx, sy, lado, lado, -t / 2, -t / 2, t, t);
+      }
+      ctx.restore();
+    });
+    return true;
+  }
+
   _impacto(tipo, x, y, fuerza = 1) {
+    const conHoja = this._hoja(tipo, x, y, fuerza);
+    if (conHoja) {
+      this._emitir(tipo, x, y, Math.round(14 * fuerza), { vmin: 80, vmax: 300 * fuerza, tmin: 2, tmax: 6 });
+      if (tipo === 'electric') this._rayo(x, y - 60, x, y + 40, tipo, 0.2, 3);
+      return;
+    }
     this._destello(x, y, tipo, 60 * fuerza);
     this._anillo(tipo, x, y, { r1: 80 * fuerza, ancho: 7 });
     this._emitir(tipo, x, y, Math.round(28 * fuerza), { vmin: 80, vmax: 320 * fuerza, tmin: 3, tmax: 8 });
