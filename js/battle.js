@@ -338,7 +338,7 @@ function movimientoDanino(b, att, def, move, ev) {
   if (move.statChanges?.length) {
     const prob = meta.statChance || 100;
     if (b.rng() * 100 < prob) {
-      const objetivo = meta.category === 'damage+raise' ? att : def;
+      const objetivo = meta.category === 'damage-raise' ? att : def;
       if (objetivo.hp > 0) for (const s of move.statChanges) cambiarStat(objetivo, s.stat, s.change, ev);
     }
   }
