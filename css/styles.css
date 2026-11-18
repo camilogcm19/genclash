@@ -300,10 +300,15 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
 .hp-top .nivel { font-family: var(--pixel); font-size: .85rem; white-space: nowrap; }
 .hp-fila { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .hp-fila b { font-family: var(--pixel); font-size: .72rem; background: #1b1f3f; color: var(--rayo); padding: 0 5px; border-radius: 4px; }
-.barra-hp { flex: 1; height: 10px; background: #3a3f63; border-radius: 6px; overflow: hidden; border: 2px solid #1b1f3f; }
-.barra-hp div { height: 100%; width: 100%; background: var(--ok); transition: width calc(.7s / var(--vel)) ease-out, background .3s; }
-.barra-hp div.media { background: #f5c518; }
-.barra-hp div.baja { background: var(--alerta); }
+.barra-hp { flex: 1; height: 11px; background: #3a3f63; border-radius: 6px; overflow: hidden; border: 2px solid #1b1f3f; position: relative; }
+.barra-hp .rastro, .barra-hp .relleno { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 0 4px 4px 0; }
+.barra-hp .rastro { background: #ffe08a; box-shadow: 0 0 6px #ffcf33; }
+.barra-hp .rastro.cura { background: #b9ffcb; box-shadow: 0 0 8px #52d273; }
+.barra-hp .relleno { background: linear-gradient(180deg, #8ff0a8, var(--ok) 55%, #32a852); }
+.barra-hp .relleno.media { background: linear-gradient(180deg, #ffe58a, #f5c518 55%, #c99a00); }
+.barra-hp .relleno.baja { background: linear-gradient(180deg, #ff9a9d, var(--alerta) 55%, #c4262b); }
+.hpbox.critico { animation: critico 1s ease-in-out infinite; }
+@keyframes critico { 50% { box-shadow: 0 5px 0 rgba(15, 18, 48, .35), 0 0 0 3px rgba(255, 90, 95, .75), 0 0 22px rgba(255, 90, 95, .6); } }
 .hp-info { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 4px; min-height: 20px; }
 .hp-num { font-family: var(--pixel); font-size: .92rem; margin-left: auto; }
 .est { font-family: var(--pixel); font-size: .72rem; padding: 0 6px; border-radius: 4px; color: #fff; }
@@ -570,3 +575,60 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
     conic-gradient(from 0deg, #f9d423, #ff4e50, #f9d423, #ffe57f, #f9d423);
 }
 .cartucho.legendario .romano { color: #fff8d6; text-shadow: 0 2px 0 #a35b00; }
+
+/* ---------- Juice de batalla ---------- */
+.oscuro { position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0; transition: opacity .25s;
+  background: radial-gradient(ellipse at 50% 55%, color-mix(in srgb, var(--c) 35%, transparent), rgba(5, 6, 20, .62) 75%); }
+.oscuro.on { opacity: 1; }
+.letrero {
+  position: absolute; z-index: 8; left: 50%; top: 38%; transform: translate(-50%, -50%) skewX(-8deg);
+  font-family: var(--pixel); font-weight: 700; font-size: clamp(1.4rem, 5vw, 2.6rem); white-space: nowrap; pointer-events: none;
+  color: #fff; -webkit-text-stroke: 2px #1b1f3f; text-shadow: 0 4px 0 #1b1f3f, 0 0 24px rgba(255, 255, 255, .5);
+  animation: letrero calc(1.2s / var(--vel)) cubic-bezier(.2, 1.4, .4, 1) forwards;
+}
+.letrero.eficaz { color: #7dffa6; }
+.letrero.critico { color: var(--rayo); font-size: clamp(1.6rem, 6vw, 3rem); }
+.letrero.poco { color: #c7cbe8; font-size: clamp(1rem, 3.5vw, 1.6rem); }
+@keyframes letrero {
+  0% { opacity: 0; transform: translate(-50%, -50%) skewX(-8deg) scale(2.4); }
+  18% { opacity: 1; transform: translate(-50%, -50%) skewX(-8deg) scale(.92); }
+  28% { transform: translate(-50%, -50%) skewX(-8deg) scale(1.05); }
+  75% { opacity: 1; transform: translate(-50%, -54%) skewX(-8deg) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -70%) skewX(-8deg) scale(.96); }
+}
+.flotante.grande { font-size: clamp(1.4rem, 3.6vw, 2.2rem); }
+.arena.sacudir-fuerte { animation: sacudir-fuerte .5s; }
+@keyframes sacudir-fuerte {
+  10% { transform: translate(-12px, 5px) rotate(-.6deg); } 25% { transform: translate(10px, -6px) rotate(.5deg); }
+  40% { transform: translate(-8px, 4px); } 55% { transform: translate(6px, -3px); } 70% { transform: translate(-4px, 2px); } 85% { transform: translate(2px, -1px); }
+}
+
+/* ---------- Pantalla VS ---------- */
+.vs-intro { position: fixed; inset: 0; z-index: 80; overflow: hidden; pointer-events: none; }
+.vs-intro[hidden] { display: none; }
+.vs-mitad { position: absolute; top: 0; bottom: 0; width: 62%; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 0 6vw; }
+.vs-mitad img { width: min(42vw, 340px); filter: drop-shadow(0 12px 0 rgba(0, 0, 0, .3)); }
+.vs-mitad b { font-family: var(--pixel); font-size: clamp(1.4rem, 5vw, 3rem); color: #fff; text-shadow: 0 4px 0 rgba(0, 0, 0, .35); }
+.vs-mitad.yo { left: 0; align-items: flex-start; background: linear-gradient(110deg, #2a6df4 0 70%, transparent 70.2%); transform: translateX(-100%); }
+.vs-mitad.el { right: 0; align-items: flex-end; text-align: right; background: linear-gradient(110deg, transparent 29.8%, #e63946 30%); transform: translateX(100%); }
+.vs-logo { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(0); font-family: var(--pixel); font-weight: 700;
+  font-size: clamp(4rem, 16vw, 9rem); color: var(--rayo); -webkit-text-stroke: 4px #1b1f3f; text-shadow: 0 8px 0 #1b1f3f; }
+.vs-intro.entra .vs-mitad.yo { animation: vs-izq .45s cubic-bezier(.2, 1.2, .4, 1) forwards; }
+.vs-intro.entra .vs-mitad.el { animation: vs-der .45s cubic-bezier(.2, 1.2, .4, 1) .08s forwards; }
+.vs-intro.entra .vs-logo { animation: vs-logo .5s cubic-bezier(.2, 1.6, .4, 1) .4s forwards; }
+.vs-intro.sale { animation: vs-sale .45s ease-in forwards; }
+@keyframes vs-izq { to { transform: translateX(0); } }
+@keyframes vs-der { to { transform: translateX(0); } }
+@keyframes vs-logo { 0% { transform: translate(-50%, -50%) scale(3) rotate(-20deg); } 100% { transform: translate(-50%, -50%) scale(1) rotate(-6deg); } }
+@keyframes vs-sale { to { opacity: 0; transform: scale(1.15); } }
+@media (max-width: 720px) {
+  .vs-mitad { width: 100%; height: 50%; padding: 0 8vw; }
+  .vs-mitad.yo { top: 0; bottom: auto; background: linear-gradient(170deg, #2a6df4 0 85%, transparent 85.5%); }
+  .vs-mitad.el { top: auto; bottom: 0; background: linear-gradient(170deg, transparent 14.5%, #e63946 15%); }
+  .vs-mitad img { width: min(38vw, 200px); }
+}
+
+/* Botón de sonido: modo solo efectos */
+#btnSonido { position: relative; }
+#btnSonido .nota-tachada { display: none; position: absolute; right: 4px; top: 2px; font-size: .7rem; text-decoration: line-through; color: var(--alerta); }
+#btnSonido.sin-musica .nota-tachada { display: block; }

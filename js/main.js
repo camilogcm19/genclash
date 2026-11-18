@@ -9,7 +9,7 @@ import { armarEquipo, sprites, aleatorio, contadorPeticiones } from './api.js';
 import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCambio, otro, FORCEJEO, fmt, rngConSemilla } from './battle.js';
 import { decidirAccion, mejorReemplazo } from './ai.js';
 import * as db from './db.js';
-import { sfx, grito, alternarSonido, estaSilenciado } from './audio.js';
+import { sfx, grito, alternarSonido, modoSonido, iniciarMusica, detenerMusica } from './audio.js';
 import { Efectos, precargarHojas } from './fx.js';
 import { buscarRival, conectarPresencia } from './online.js';
 import { URL_PUBLICA } from './config.js';
@@ -84,6 +84,7 @@ const haceCuanto = (iso) => {
 };
 
 function mostrar(p) {
+  if (p !== 'batalla') detenerMusica();
   $$('.pantalla').forEach((x) => x.classList.toggle('activa', x.id === `pantalla-${p}`));
   window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
 }
@@ -197,7 +198,7 @@ function elegirGen(id) {
   estado.gen = id;
   localStorage.setItem('gc:gen', id);
   $$('.cartucho').forEach((c, i) => c.setAttribute('aria-checked', String(LISTA_GENS[i].id === id)));
-  sfx.click();
+  sfx.seleccion();
   actualizarCTA();
 }
 
@@ -650,13 +651,30 @@ function iniciarBatalla() {
   const mio = estado.miLado; const suyo = otro(mio);
   const R = activo(b, suyo); const P = activo(b, mio);
   R.vecesUsado = 1; P.vecesUsado = 1;
-  reproducir([
+  introVS(P, R).then(() => reproducir([
     { t: 'msg', texto: enPvp() ? `¡Duelo en línea contra ${estado.rival}!` : `¡${estado.rival} quiere pelear!` },
     { t: 'msg', texto: `¡${estado.rival} envió a ${R.nombre}!` },
     { t: 'entrar', side: suyo, mon: R, hp: R.hp, maxHp: R.maxHp, estado: null },
     { t: 'msg', texto: `¡Adelante, ${P.nombre}!` },
     { t: 'entrar', side: mio, mon: P, hp: P.hp, maxHp: P.maxHp, estado: null },
-  ]).then(mostrarMenu);
+  ])).then(mostrarMenu);
+}
+
+/** Pantalla "VS" de entrada con los dos entrenadores y sus primeros Pokémon. */
+function introVS(P, R) {
+  const el = $('#vsIntro');
+  el.innerHTML = `
+    <div class="vs-mitad yo"><img src="${P.sprites.arte}" alt="" /><b>${esc(estado.usuario)}</b></div>
+    <div class="vs-mitad el"><img src="${R.sprites.arte}" alt="" /><b>${esc(estado.rival)}</b></div>
+    <div class="vs-logo">VS</div>`;
+  el.hidden = false;
+  el.classList.remove('sale'); void el.offsetWidth; el.classList.add('entra');
+  sfx.inicioBatalla();
+  iniciarMusica();
+  return new Promise((ok) => {
+    setTimeout(() => { el.classList.add('sale'); }, reducido ? 300 : 1700);
+    setTimeout(() => { el.hidden = true; el.classList.remove('entra', 'sale'); ok(); }, reducido ? 500 : 2150);
+  });
 }
 
 // Escala de sprites según el tamaño de la arena
@@ -710,7 +728,8 @@ function renderHp(side) {
   const m = estado.mostrado[side];
   if (!m) return;
   const mon = m.mon;
-  const pct = Math.max(0, Math.round((m.hp / m.maxHp) * 100));
+  const hpVis = m.hpVis ?? m.hp;
+  const pct = Math.max(0, Math.round((hpVis / m.maxHp) * 100));
   const nivel = pct > 50 ? '' : pct > 20 ? 'media' : 'baja';
   const est = m.estado ? `<span class="est" style="background:${ESTADOS[m.estado].color}">${ESTADOS[m.estado].corto}</span>` : '';
   const boosts = Object.entries(m.boosts || {}).filter(([, v]) => v).map(([k, v]) => {
@@ -722,22 +741,71 @@ function renderHp(side) {
   hpbox[side].innerHTML = `
     <div class="hp-top"><span class="nombre">${esc(mon.nombre)}</span><span class="nivel">Nv. ${mon.level}</span></div>
     <div class="tipos">${mon.types.map(badgeTipo).join('')}</div>
-    <div class="hp-fila"><b>PS</b><div class="barra-hp"><div class="${nivel}" style="width:${pct}%"></div></div></div>
-    <div class="hp-info">${est}<span class="boosts">${boosts}</span><span class="hp-num">${side === 'player' ? `${m.hp}/${m.maxHp}` : `${pct}%`}</span></div>
+    <div class="hp-fila"><b>PS</b><div class="barra-hp"><div class="rastro" style="width:${pct}%"></div><div class="relleno ${nivel}" style="width:${pct}%"></div></div></div>
+    <div class="hp-info">${est}<span class="boosts">${boosts}</span><span class="hp-num">${side === 'player' ? `${Math.round(hpVis)}/${m.maxHp}` : `${pct}%`}</span></div>
     <div class="equipo-puntos" aria-label="Pokémon restantes">${puntos}</div>`;
   hpbox[side].setAttribute('aria-label', `${mon.nombre}, ${pct}% de PS`);
+  hpbox[side].classList.toggle('critico', side === 'player' && pct > 0 && pct <= 20);
 }
 
-/** Actualiza solo la barra (para que la transición CSS se vea). */
-function actualizarBarra(side) {
+/**
+ * Anima la barra de PS como en los juegos: la barra baja poco a poco, los números
+ * cuentan, y un "rastro" claro muestra lo que se perdió antes de encogerse.
+ */
+function animarPS(side, objetivo, dur = 900) {
   const m = estado.mostrado[side];
-  const pct = Math.max(0, (m.hp / m.maxHp) * 100);
-  const barra = hpbox[side].querySelector('.barra-hp div');
-  if (!barra) return renderHp(side);
-  barra.style.width = `${pct}%`;
-  barra.className = pct > 50 ? '' : pct > 20 ? 'media' : 'baja';
-  const num = hpbox[side].querySelector('.hp-num');
-  num.textContent = side === 'player' ? `${m.hp}/${m.maxHp}` : `${Math.round(pct)}%`;
+  const desde = m.hpVis ?? objetivo;
+  const caja = hpbox[side];
+  const relleno = caja.querySelector('.barra-hp .relleno');
+  const rastro = caja.querySelector('.barra-hp .rastro');
+  const num = caja.querySelector('.hp-num');
+  if (!relleno) { m.hpVis = objetivo; renderHp(side); return Promise.resolve(); }
+  const baja = objetivo < desde;
+  const pctDe = (v) => Math.max(0, (v / m.maxHp) * 100);
+  rastro.classList.toggle('cura', !baja);
+  rastro.style.transition = 'none';
+  rastro.style.width = `${pctDe(baja ? desde : objetivo)}%`;
+  if (baja) setTimeout(() => { rastro.style.transition = `width ${0.5 / estado.vel}s ease-in`; rastro.style.width = `${pctDe(objetivo)}%`; }, (dur * 0.7) / estado.vel);
+  const total = (reducido ? 200 : dur) / estado.vel;
+  const t0 = performance.now();
+  return new Promise((ok) => {
+    const paso = (ahora) => {
+      const k = Math.min(1, (ahora - t0) / total);
+      const e = 1 - (1 - k) ** 3;
+      const v = desde + (objetivo - desde) * e;
+      m.hpVis = v;
+      const pct = pctDe(v);
+      relleno.style.width = `${pct}%`;
+      relleno.className = `relleno ${pct > 50 ? '' : pct > 20 ? 'media' : 'baja'}`;
+      num.textContent = side === 'player' ? `${Math.round(v)}/${m.maxHp}` : `${Math.round(pct)}%`;
+      if (k < 1) requestAnimationFrame(paso);
+      else {
+        m.hpVis = objetivo;
+        const final = pctDe(objetivo);
+        caja.classList.toggle('critico', side === 'player' && final > 0 && final <= 20);
+        if (side === 'player' && final > 0 && final <= 20 && !m.alarmado) { m.alarmado = true; sfx.alarma(); }
+        ok();
+      }
+    };
+    requestAnimationFrame(paso);
+  });
+}
+
+/** Letrero grande en la arena: "¡SÚPER EFICAZ!", "¡CRÍTICO!"… */
+function letrero(texto, cls = '') {
+  const el = document.createElement('div');
+  el.className = `letrero ${cls}`;
+  el.textContent = texto;
+  arena.append(el);
+  setTimeout(() => el.remove(), 1300 / estado.vel);
+}
+
+/** Oscurece el escenario con el color del tipo mientras dura un ataque especial. */
+function oscurecer(tipo, on) {
+  let o = arena.querySelector('.oscuro');
+  if (!o) { o = document.createElement('div'); o.className = 'oscuro'; arena.prepend(o); }
+  o.style.setProperty('--c', TIPOS[tipo]?.color || '#000');
+  o.classList.toggle('on', on);
 }
 
 function centro(side) {
@@ -770,16 +838,29 @@ async function animAtaque(side, move) {
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   const dir = side === 'player' ? [1, -1] : [-1, 1];
   const contacto = move.category === 'physical';
-  const dist = contacto ? 26 : 8;
+  const estado_ = move.category === 'status';
+  const fuerte = (move.power || 0) >= 80;
+  const otroLado = side === 'player' ? 'rival' : 'player';
+  if (!estado_ && (fuerte || move.category === 'special')) oscurecer(move.type, true);
+  // 1) Carga de energía
+  if (!estado_) {
+    sfx.carga(move.type);
+    anim(img, [{ filter: 'brightness(1)' }, { filter: `brightness(1.8) drop-shadow(0 0 12px ${TIPOS[move.type]?.color || '#fff'})` }, { filter: 'brightness(1)' }], { duration: 420 });
+    await fx.cargar(move.type, centro(side), contacto ? 0.25 : 0.42);
+  }
+  // 2) Lanzamiento
+  sfx.ataque(move.type, move.power);
+  const dist = contacto ? 30 : 8;
   const embestida = anim(img, [
     { transform: `translate(0,0)${espejo}` },
-    { transform: `translate(${dir[0] * dist}%, ${dir[1] * dist * 0.5}%)${espejo}`, offset: 0.4 },
+    { transform: `translate(${-dir[0] * 4}%, ${-dir[1] * 2}%)${espejo}`, offset: 0.2 },
+    { transform: `translate(${dir[0] * dist}%, ${dir[1] * dist * 0.5}%)${espejo}`, offset: 0.5 },
     { transform: `translate(0,0)${espejo}` },
-  ], { duration: contacto ? 380 : 300 });
-  if (contacto) await espera(150);
-  if (move.category !== 'status' || move.power) sfx.disparo();
-  await fx.animar(move, centro(side), centro(side === 'player' ? 'rival' : 'player'));
+  ], { duration: contacto ? 460 : 320 });
+  if (contacto) await espera(200);
+  await fx.animar(move, centro(side), centro(otroLado));
   await embestida;
+  oscurecer(move.type, false);
 }
 
 async function animDanio(e) {
@@ -788,32 +869,45 @@ async function animDanio(e) {
   const img = spriteDe(e.side);
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   const c = centro(e.side);
-  if (e.residual) fx.estado(e.estado === 'burn' ? 'fire' : 'poison', c);
-  else fx.golpecito(e.tipo || 'normal', c);
-  sfx.golpe(e.residual ? 0.5 : (e.eff ?? 1));
+  const pct = Math.max(1, Math.round((e.cantidad / m.maxHp) * 100));
+  if (e.residual) { fx.estado(e.estado === 'burn' ? 'fire' : 'poison', c); sfx.residual(); }
+  else { fx.golpecito(e.tipo || 'normal', c); sfx.golpe(e.eff ?? 1, e.critico); }
+  // Destello blanco + retroceso del Pokémon golpeado
+  const atras = e.side === 'rival' ? [5, -2] : [-5, 2];
+  anim(img, [
+    { transform: `translate(0,0)${espejo}`, filter: 'brightness(1)' },
+    { transform: `translate(${atras[0]}%, ${atras[1]}%)${espejo}`, filter: 'brightness(5) saturate(0)', offset: 0.15 },
+    { transform: `translate(${atras[0] * 0.6}%, ${atras[1] * 0.6}%)${espejo}`, filter: 'brightness(1)', offset: 0.35 },
+    { transform: `translate(${atras[0] * 0.3}%, 0)${espejo}`, filter: 'brightness(4) saturate(0)', offset: 0.5 },
+    { transform: `translate(0,0)${espejo}`, filter: 'brightness(1)' },
+  ], { duration: 520 });
+  anim(hpbox[e.side], [{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }], { duration: 320 });
   if (e.critico) {
     const f = document.createElement('div'); f.className = 'destello'; arena.append(f); setTimeout(() => f.remove(), 350);
+    letrero('¡CRÍTICO!', 'critico');
+  } else if (e.eff > 1) letrero('¡SÚPER EFICAZ!', 'eficaz');
+  else if (e.eff < 1 && !e.residual) letrero('Poco eficaz', 'poco');
+  if ((e.eff > 1 || e.critico || pct >= 35) && !reducido) {
+    arena.classList.remove('sacudir', 'sacudir-fuerte'); void arena.offsetWidth;
+    arena.classList.add(e.eff > 1 && pct >= 35 ? 'sacudir-fuerte' : 'sacudir');
   }
-  if ((e.eff > 1 || e.critico) && !reducido) { arena.classList.remove('sacudir'); void arena.offsetWidth; arena.classList.add('sacudir'); }
-  anim(img, [{ opacity: 1, transform: `translateX(0)${espejo}` }, { opacity: 0.2, transform: `translateX(-4%)${espejo}` }, { opacity: 1, transform: `translateX(4%)${espejo}` }, { opacity: 0.2 }, { opacity: 1, transform: `translateX(0)${espejo}` }], { duration: 420 });
-  actualizarBarra(e.side);
-  const pct = Math.max(1, Math.round((e.cantidad / m.maxHp) * 100));
-  flotante(e.side, e.critico ? `¡Crítico! −${pct}%` : `−${pct}%`, e.critico ? 'crit' : 'dano');
-  await espera(720);
+  flotante(e.side, e.critico ? `−${pct}%` : `−${pct}%`, e.critico ? 'crit grande' : pct >= 35 ? 'dano grande' : 'dano');
+  await animarPS(e.side, e.hp, 500 + Math.min(700, pct * 12));
+  await espera(180);
 }
 
 async function animCurar(e) {
   estado.mostrado[e.side].hp = e.hp;
   fx.animar({ name: 'recover', type: 'grass', category: 'status', target: 'user', meta: { category: 'heal' } }, centro(e.side), centro(e.side));
   sfx.curar();
-  actualizarBarra(e.side);
   flotante(e.side, `+${Math.max(1, Math.round((e.cantidad / e.maxHp) * 100))}%`, 'cura');
-  await espera(650);
+  if (estado.mostrado[e.side].hp / e.maxHp > 0.2) estado.mostrado[e.side].alarmado = false;
+  await animarPS(e.side, e.hp, 800);
 }
 
 async function animEntrar(e) {
   const side = e.side;
-  estado.mostrado[side] = { mon: e.mon, hp: e.hp, maxHp: e.maxHp, estado: e.estado, boosts: {} };
+  estado.mostrado[side] = { mon: e.mon, hp: e.hp, hpVis: e.hp, maxHp: e.maxHp, estado: e.estado, boosts: {} };
   const img = spriteDe(side);
   img.classList.remove('visible');
   await cargarSprite(side, e.mon);
@@ -831,6 +925,7 @@ async function animEntrar(e) {
   img.classList.add('visible');
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   grito(e.mon.grito);
+  fx.cargar('normal', c, 0.2);
   await anim(img, [{ transform: `scale(0)${espejo}`, filter: 'brightness(4)' }, { transform: `scale(1.08)${espejo}`, filter: 'brightness(2)', offset: 0.7 }, { transform: `scale(1)${espejo}`, filter: 'brightness(1)' }], { duration: 450 });
   await espera(250);
 }
@@ -838,7 +933,7 @@ async function animEntrar(e) {
 async function animRetirar(side) {
   const img = spriteDe(side);
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
-  sfx.entrar();
+  sfx.retirar();
   await anim(img, [{ transform: `scale(1)${espejo}`, filter: 'none' }, { transform: `scale(0)${espejo}`, filter: 'brightness(.6) sepia(1) hue-rotate(-50deg) saturate(6)' }], { duration: 380, easing: 'ease-in' });
   img.classList.remove('visible');
   hpbox[side].classList.remove('visible');
@@ -847,12 +942,15 @@ async function animRetirar(side) {
 async function animDebil(side) {
   const img = spriteDe(side);
   const m = estado.mostrado[side];
-  m.hp = 0; m.estado = null;
+  m.hp = 0; m.hpVis = 0; m.estado = null;
+  hpbox[side].classList.remove('critico');
   estado.caidos[side].add(estado.batalla.lados[motor(side)].equipo.indexOf(m.mon));
   grito(m.mon.grito, { velocidad: 0.75, volumen: 0.3 });
   sfx.debilitado();
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
-  await anim(img, [{ transform: `translateY(0)${espejo}`, opacity: 1 }, { transform: `translateY(45%)${espejo}`, opacity: 0 }], { duration: 650, easing: 'ease-in' });
+  const c = centro(side);
+  await anim(img, [{ transform: `translateY(0)${espejo}`, opacity: 1, filter: 'brightness(1)' }, { transform: `translateY(8%)${espejo}`, opacity: 1, filter: 'brightness(.6) grayscale(1)', offset: 0.3 }, { transform: `translateY(55%) scaleY(.6)${espejo}`, opacity: 0, filter: 'brightness(.4) grayscale(1)' }], { duration: 750, easing: 'ease-in' });
+  fx.golpecito('ground', { x: c.x, y: c.y + c.h * 0.35 });
   img.classList.remove('visible');
   renderHp(side);
   await espera(300);
@@ -885,7 +983,7 @@ async function animMini(e) {
 const lcd = $('#lcd');
 function decir(textoCrudo, cls = '') {
   const texto = fmt(textoCrudo, estado.miLado);
-  if (cls !== 'detalle') $('#lcdTexto').textContent = texto;
+  if (cls !== 'detalle') { $('#lcdTexto').textContent = texto; sfx.texto(); }
   const li = document.createElement('li');
   li.textContent = texto;
   if (cls) li.className = cls;
@@ -1179,6 +1277,7 @@ async function finalizar() {
     : b.motivo === 'rendicion' ? (gano ? `${estado.rival} se rindió.` : 'Te rendiste.') : '';
   $('#lcdTexto').textContent = motivo || (gano ? `¡Derrotaste a ${estado.rival}!` : `${estado.rival} ganó la batalla.`);
   (gano ? sfx.victoria : sfx.derrota)();
+  if (gano) fx.confeti();
 
   $('#resultadoContenido').innerHTML = `
     <h2 id="t-res" class="res-titulo ${gano ? 'victoria' : 'derrota'}">${gano ? '¡Victoria!' : 'Derrota'}</h2>
@@ -1229,8 +1328,30 @@ async function arrancar() {
   $$('input[name=modo]').forEach((r) => { r.checked = r.value === estado.modo; });
   $('#btnVelocidad').textContent = `${estado.vel}×`;
   document.documentElement.style.setProperty('--vel', estado.vel);
-  $('#btnSonido').classList.toggle('mute', estaSilenciado());
-  $('#btnSonido').addEventListener('click', (e) => { e.currentTarget.classList.toggle('mute', alternarSonido()); sfx.click(); });
+  const pintarSonido = () => {
+    const m = modoSonido();
+    const bt = $('#btnSonido');
+    bt.classList.toggle('mute', m === 'silencio');
+    bt.classList.toggle('sin-musica', m === 'efectos');
+    bt.title = m === 'todo' ? 'Música y efectos' : m === 'efectos' ? 'Solo efectos (sin música)' : 'Sin sonido';
+  };
+  pintarSonido();
+  $('#btnSonido').addEventListener('click', () => {
+    const m = alternarSonido(); pintarSonido(); sfx.click();
+    toast(m === 'todo' ? 'Música y efectos activados' : m === 'efectos' ? 'Música apagada, efectos activos' : 'Sonido apagado', 1800);
+    if (m === 'todo' && $('#pantalla-batalla').classList.contains('activa') && estado.batalla && !estado.batalla.terminada) iniciarMusica();
+  });
+  // Sonidos de interfaz: pasar el cursor y tocar botones
+  let ultimoHover = 0;
+  document.addEventListener('pointerover', (e) => {
+    const b = e.target.closest('.mov:not(:disabled), .cartucho, .btn-primario, .btn-secundario, .cambio:not(:disabled), .pv-lista button');
+    if (!b || e.pointerType !== 'mouse' || b.contains(e.relatedTarget)) return;
+    const t = performance.now(); if (t - ultimoHover > 60) { ultimoHover = t; sfx.hover(); }
+  });
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.btn-primario')) sfx.confirmar();
+    else if (e.target.closest('.btn-secundario, .btn-mini, .btn-icono:not(#btnSonido), .login-tabs button')) sfx.seleccion();
+  }, true);
   $$('[data-ir=inicio]').forEach((bt) => bt.addEventListener('click', () => {
     if (!estado.usuario) { mostrarLogin(); return; }
     const b = estado.batalla;

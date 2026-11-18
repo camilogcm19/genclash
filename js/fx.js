@@ -44,16 +44,16 @@ const TIPOS_HOJA = ['fire', 'electric', 'water', 'ice', 'grass', 'psychic', 'gho
 const LUMINOSOS = new Set(['fire', 'electric', 'psychic', 'dragon', 'ice', 'fairy', 'fighting', 'normal', 'water', 'steel']);
 
 /** Descarga las hojas en segundo plano. Si alguna falla, se usan solo partículas. */
+const ORBES = {};
 export function precargarHojas(base = 'assets/fx/') {
   for (const t of TIPOS_HOJA) {
-    if (HOJAS[t]) continue;
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = `${base}${t}.webp`;
-    HOJAS[t] = img;
+    if (!HOJAS[t]) { const img = new Image(); img.decoding = 'async'; img.src = `${base}${t}.webp`; HOJAS[t] = img; }
+    if (!ORBES[t]) { const img = new Image(); img.decoding = 'async'; img.src = `${base}orbe_${t}.webp`; ORBES[t] = img; }
   }
 }
-const hojaLista = (t) => { const i = HOJAS[t === 'typeless' ? 'normal' : t]; return i && i.complete && i.naturalWidth > 0 ? i : null; };
+const lista = (mapa, t) => { const i = mapa[t === 'typeless' ? 'normal' : t]; return i && i.complete && i.naturalWidth > 0 ? i : null; };
+const hojaLista = (t) => lista(HOJAS, t);
+const orbeListo = (t) => lista(ORBES, t);
 
 /** Decide la "forma" visual del movimiento a partir de su nombre en inglés y su categoría. */
 export function formaDe(move) {
@@ -305,6 +305,58 @@ export class Efectos {
     });
   }
 
+  /** Dibuja un cuadro del orbe 3D (bucle de 8 cuadros, 4x2) en (x, y). */
+  _dibujarOrbe(ctx, img, x, y, tam, t, rot = 0) {
+    const cols = 4; const lado = img.naturalWidth / cols;
+    const i = Math.floor(t * 24) % 8;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+    ctx.drawImage(img, (i % cols) * lado, Math.floor(i / cols) * lado, lado, lado, -tam / 2, -tam / 2, tam, tam);
+    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.25;
+    ctx.drawImage(img, (i % cols) * lado, Math.floor(i / cols) * lado, lado, lado, -tam / 2, -tam / 2, tam, tam);
+    ctx.restore();
+  }
+
+  /** Carga de energía: partículas que convergen en el atacante y un orbe que crece. */
+  async cargar(tipo, a, dur = 0.42) {
+    tipo = ESTILO[tipo] ? tipo : 'normal';
+    const e = ESTILO[tipo];
+    const esc = this.w / 600 + 0.35;
+    const img = orbeListo(tipo);
+    let reloj = 0;
+    this._forma(dur, (ctx, k, f) => {
+      reloj += 1 / 60;
+      if (Math.random() < 0.9) {
+        const ang = rnd(0, TAU); const r = rnd(60, 110) * esc;
+        this.p.push({ x: a.x + Math.cos(ang) * r, y: a.y + Math.sin(ang) * r, vx: -Math.cos(ang) * r / 0.3, vy: -Math.sin(ang) * r / 0.3, ax: 0, ay: 0, friccion: 1,
+          vida: 0.3, max: 0.3, tam: rnd(2, 4) * esc, color: pick(e.c), forma: 'brillo', luz: true, rot: 0, vr: 0 });
+      }
+      const tam = (18 + 50 * k) * esc;
+      if (img) this._dibujarOrbe(ctx, img, a.x, a.y, tam * 1.6, reloj);
+      else {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(a.x, a.y, 0, a.x, a.y, tam);
+        g.addColorStop(0, '#fff'); g.addColorStop(0.4, e.c[1]); g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(a.x, a.y, tam, 0, TAU); ctx.fill(); ctx.restore();
+      }
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.6 * (1 - k);
+      ctx.strokeStyle = e.c[2]; ctx.lineWidth = 3 * esc;
+      ctx.beginPath(); ctx.arc(a.x, a.y, (110 - 90 * k) * esc, 0, TAU); ctx.stroke(); ctx.restore();
+    });
+    this._arrancar();
+    await espera((dur * 1000) / this.vel);
+  }
+
+  /** Lluvia de confeti para celebrar una victoria. */
+  confeti() {
+    const colores = ['#ffcf33', '#ff5a5f', '#52d273', '#5cb8ff', '#c77dff', '#ffffff'];
+    for (let i = 0; i < 140; i++) {
+      this.p.push({ x: rnd(0, this.w), y: rnd(-80, -5), vx: rnd(-40, 40), vy: rnd(60, 180), ax: 0, ay: 120, friccion: 0.995,
+        vida: rnd(2.2, 3.4), max: 3.4, tam: rnd(3, 6) * (this.w / 600 + 0.35), color: pick(colores),
+        forma: Math.random() < 0.3 ? 'estrella' : 'cristal', luz: false, rot: rnd(0, TAU), vr: rnd(-8, 8), desvanece: false });
+    }
+    this._arrancar();
+  }
+
   /** Reproduce la explosión 3D de Blender centrada en (x, y). Devuelve false si la hoja no está cargada. */
   _hoja(tipo, x, y, tam = 1, dur = 0.8) {
     const img = hojaLista(tipo);
@@ -383,10 +435,14 @@ export class Efectos {
         const x = a.x + (b.x - a.x) * k; const y = a.y + (b.y - a.y) * k + Math.sin(k * Math.PI) * arco;
         return [x, y];
       };
+      const orbe = orbeListo(tipo);
+      let reloj = 0;
       this._forma(dur, (ctx, k) => {
         const [x, y] = pos(k);
+        reloj += 1 / 60;
         // estela
         this._emitir(tipo, x, y, grande ? 4 : 2, { vmin: 10, vmax: 60, vidaMin: 0.2, vidaMax: 0.45, tmin: 3, tmax: grande ? 9 : 6 });
+        if (orbe) { this._dibujarOrbe(ctx, orbe, x, y, (grande ? 120 : 92) * esc, reloj, k * 6); return; }
         ctx.save(); ctx.globalCompositeOperation = 'lighter';
         const r = (grande ? 20 : 13) * esc;
         const g = ctx.createRadialGradient(x, y, 0, x, y, r * 1.8);
@@ -406,7 +462,10 @@ export class Efectos {
     const dur = 0.6;
     if (tipo === 'electric') { this._rayo(a.x, a.y, b.x, b.y, tipo, dur, 6); }
     else {
+      const orbe = orbeListo(tipo);
+      let reloj = 0;
       this._forma(dur, (ctx, k) => {
+        reloj += 1 / 60;
         const crece = Math.min(1, k / 0.35);
         const x2 = a.x + (b.x - a.x) * crece; const y2 = a.y + (b.y - a.y) * crece;
         const pulso = 1 + Math.sin(k * 40) * 0.15;
@@ -417,6 +476,7 @@ export class Efectos {
           ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(x2, y2); ctx.stroke();
         }
         ctx.restore();
+        if (orbe) { this._dibujarOrbe(ctx, orbe, a.x, a.y, 80 * esc * fin, reloj); this._dibujarOrbe(ctx, orbe, x2, y2, 64 * esc * fin, reloj + 0.2); }
         if (Math.random() < 0.7) {
           const t = Math.random() * crece;
           this._emitir(tipo, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, 1, { vmin: 20, vmax: 90, vidaMin: 0.2, vidaMax: 0.4 });
