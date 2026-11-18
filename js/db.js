@@ -1,34 +1,113 @@
 // ============================================================
 //  GenClash · Base de datos (Supabase)
-//  Tabla `partidas` + vista `ranking` (ver supabase/schema.sql).
-//  Incluye respaldo en localStorage si Supabase no está configurado.
+//  - Cuentas con usuario y contraseña (funciones SQL, sin correo)
+//  - Partidas, ranking y tiempo real
+//  Ver supabase/schema.sql
 // ============================================================
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
 let cliente = null;
 try {
   if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase?.createClient) {
-    cliente = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    cliente = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      realtime: { params: { eventsPerSecond: 20 } },
+    });
   }
 } catch (e) {
   console.warn('Supabase no disponible, se usará modo local.', e);
 }
 
 export const enLinea = () => !!cliente;
+export const obtenerCliente = () => cliente;
 
+// ------------------------------------------------------------
+//  Sesión
+// ------------------------------------------------------------
+const CLAVE_SESION = 'gc:sesion';
+let sesion = (() => { try { return JSON.parse(localStorage.getItem(CLAVE_SESION)); } catch { return null; } })();
+export const sesionActual = () => sesion;
+const guardarSesion = (s) => { sesion = s; try { s ? localStorage.setItem(CLAVE_SESION, JSON.stringify(s)) : localStorage.removeItem(CLAVE_SESION); } catch { /* sin almacenamiento */ } };
+
+const ERRORES = {
+  USUARIO_INVALIDO: 'El usuario debe tener de 3 a 16 letras, números o guion bajo, sin espacios.',
+  PASSWORD_INVALIDA: 'La contraseña debe tener al menos 4 caracteres.',
+  USUARIO_EXISTE: 'Ese usuario ya existe. Elige otro o inicia sesión.',
+  CREDENCIALES: 'Usuario o contraseña incorrectos.',
+  SESION_INVALIDA: 'Tu sesión expiró. Vuelve a iniciar sesión.',
+};
+const traducir = (error) => {
+  const m = error?.message || String(error);
+  const clave = Object.keys(ERRORES).find((k) => m.includes(k));
+  if (clave) return ERRORES[clave];
+  if (/fetch|network/i.test(m)) return 'No hay conexión con el servidor. Revisa tu internet.';
+  return m;
+};
+
+async function rpc(nombre, args) {
+  const { data, error } = await cliente.rpc(nombre, args);
+  if (error) throw new Error(traducir(error));
+  return data;
+}
+
+export async function registrar(usuario, password) {
+  usuario = usuario.trim();
+  if (!/^[A-Za-z0-9_ñÑáéíóúÁÉÍÓÚüÜ]{3,16}$/.test(usuario)) throw new Error(ERRORES.USUARIO_INVALIDO);
+  if (password.length < 4) throw new Error(ERRORES.PASSWORD_INVALIDA);
+  if (!cliente) { guardarSesion({ token: 'local', usuario }); return sesion; }
+  const r = await rpc('registrar', { p_usuario: usuario, p_password: password });
+  guardarSesion({ token: r.token, usuario: r.usuario });
+  return sesion;
+}
+
+export async function iniciarSesion(usuario, password) {
+  usuario = usuario.trim();
+  if (!usuario || !password) throw new Error('Escribe tu usuario y tu contraseña.');
+  if (!cliente) { guardarSesion({ token: 'local', usuario }); return sesion; }
+  const r = await rpc('iniciar_sesion', { p_usuario: usuario, p_password: password });
+  guardarSesion({ token: r.token, usuario: r.usuario });
+  return sesion;
+}
+
+/** Revisa que la sesión guardada siga siendo válida. */
+export async function verificarSesion() {
+  if (!sesion) return null;
+  if (!cliente) return sesion;
+  try {
+    const r = await rpc('sesion_actual', { p_token: sesion.token });
+    if (!r) { guardarSesion(null); return null; }
+    sesion.usuario = r.usuario;
+    return sesion;
+  } catch {
+    return sesion; // sin internet: se mantiene y se valida al guardar
+  }
+}
+
+export async function cerrarSesion() {
+  const s = sesion;
+  guardarSesion(null);
+  if (cliente && s?.token) { try { await cliente.rpc('cerrar_sesion', { p_token: s.token }); } catch { /* da igual */ } }
+}
+
+// ------------------------------------------------------------
+//  Partidas y ranking
+// ------------------------------------------------------------
 const CLAVE_LOCAL = 'gc:partidas';
 const leerLocal = () => { try { return JSON.parse(localStorage.getItem(CLAVE_LOCAL)) || []; } catch { return []; } };
 const guardarLocal = (lista) => { try { localStorage.setItem(CLAVE_LOCAL, JSON.stringify(lista.slice(0, 200))); } catch { /* lleno */ } };
 
-/** Guarda el resultado de una batalla. Devuelve { ok, remoto }. */
+/** Guarda el resultado de una batalla a nombre del usuario con sesión. */
 export async function guardarPartida(partida) {
-  const fila = { ...partida, creado_en: new Date().toISOString() };
+  const fila = { ...partida, jugador: sesion?.usuario || 'Invitado', creado_en: new Date().toISOString() };
   guardarLocal([fila, ...leerLocal()]);
   if (!cliente) return { ok: true, remoto: false };
-  const { creado_en, ...sinFecha } = fila;
-  const { error } = await cliente.from('partidas').insert(sinFecha);
-  if (error) { console.error(error); return { ok: false, remoto: true, error: error.message }; }
-  return { ok: true, remoto: true };
+  if (!sesion) return { ok: false, error: 'Inicia sesión para guardar en el ranking.' };
+  try {
+    await rpc('guardar_partida', { p_token: sesion.token, p: partida });
+    return { ok: true, remoto: true };
+  } catch (e) {
+    return { ok: false, remoto: true, error: e.message };
+  }
 }
 
 function rankingDesde(filas) {
@@ -53,7 +132,7 @@ export async function obtenerRanking() {
 export async function obtenerRecientes(limite = 8) {
   if (!cliente) return leerLocal().slice(0, limite);
   const { data, error } = await cliente.from('partidas')
-    .select('id, jugador, rival_nombre, generacion, resultado, turnos, restantes, mvp_id, mvp_nombre, tamano, creado_en')
+    .select('id, jugador, rival_nombre, generacion, resultado, turnos, restantes, mvp_id, mvp_nombre, tamano, modo, creado_en')
     .order('creado_en', { ascending: false }).limit(limite);
   if (error) throw error;
   return data;
@@ -63,18 +142,11 @@ export async function obtenerEstadisticas() {
   let filas;
   if (!cliente) filas = leerLocal();
   else {
-    const { data, error } = await cliente.from('partidas').select('jugador, generacion, resultado, mvp_id, mvp_nombre').order('creado_en', { ascending: false }).limit(1000);
+    const { data, error } = await cliente.from('partidas').select('jugador, generacion, resultado, mvp_id, mvp_nombre, modo').order('creado_en', { ascending: false }).limit(1000);
     if (error) throw error;
     filas = data;
   }
   const total = filas.length;
-  const victorias = filas.filter((f) => f.resultado === 'victoria').length;
-  const contar = (campo) => {
-    const c = new Map();
-    for (const f of filas) if (f[campo] != null) c.set(f[campo], (c.get(f[campo]) || 0) + 1);
-    return [...c.entries()].sort((a, b) => b[1] - a[1]);
-  };
-  const gens = contar('generacion');
   const mvps = new Map();
   for (const f of filas) if (f.resultado === 'victoria' && f.mvp_id) {
     const r = mvps.get(f.mvp_id) || { id: f.mvp_id, nombre: f.mvp_nombre, veces: 0 };
@@ -83,8 +155,7 @@ export async function obtenerEstadisticas() {
   return {
     total,
     jugadores: new Set(filas.map((f) => f.jugador)).size,
-    porcentajeGlobal: total ? Math.round((victorias / total) * 100) : 0,
-    genFavorita: gens[0]?.[0] ?? '—',
+    duelos: Math.round(filas.filter((f) => f.modo === 'pvp').length / 2),
     topMvp: [...mvps.values()].sort((a, b) => b.veces - a.veces).slice(0, 3),
   };
 }

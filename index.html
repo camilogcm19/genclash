@@ -25,6 +25,10 @@
     </button>
     <nav class="barra-acciones">
       <span class="conexion" id="conexion" title="Estado de la base de datos"></span>
+      <span class="usuario-chip" id="usuarioChip" hidden>
+        <span id="usuarioNombre"></span>
+        <button class="btn-mini" id="btnSalir" type="button">Salir</button>
+      </span>
       <button class="btn-icono" id="btnQR" aria-label="Mostrar código QR">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM5 5v3h3V5zM14 3h7v7h-7zm2 2v3h3V5zM3 14h7v7H3zm2 2v3h3v-3zM14 14h3v3h-3zM18 18h3v3h-3zM17 14h4v2h-4zM14 18h2v3h-2z"/></svg>
         <span>QR</span>
@@ -37,18 +41,51 @@
   </header>
 
   <main id="contenido">
+    <!-- ======================= LOGIN ======================= -->
+    <section class="pantalla" id="pantalla-login" aria-labelledby="t-login">
+      <div class="login">
+        <div class="login-intro">
+          <h1 id="t-login">Elige una generación.<br />Pelea con lo que te toque.</h1>
+          <p class="bajada">Contra la computadora o contra otra persona en línea, con Pokémon, ataques y estadísticas reales de la PokeAPI.</p>
+          <div class="login-desfile" id="loginDesfile" aria-hidden="true"></div>
+        </div>
+        <form class="login-caja" id="formLogin" autocomplete="on" novalidate>
+          <div class="login-tabs" role="tablist">
+            <button type="button" role="tab" class="activa" id="tabEntrar" aria-selected="true">Iniciar sesión</button>
+            <button type="button" role="tab" id="tabCrear" aria-selected="false">Crear cuenta</button>
+          </div>
+          <label class="campo">
+            <span>Usuario</span>
+            <input id="loginUsuario" name="username" autocomplete="username" maxlength="16" required placeholder="Ej. efrain_gcm" />
+          </label>
+          <label class="campo">
+            <span>Contraseña</span>
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" minlength="4" maxlength="72" required />
+          </label>
+          <label class="campo" id="campoConfirmar" hidden>
+            <span>Repite la contraseña</span>
+            <input id="loginConfirmar" type="password" autocomplete="new-password" maxlength="72" />
+          </label>
+          <p class="login-error" id="loginError" role="alert"></p>
+          <button class="btn-primario" id="btnLogin" type="submit">Entrar</button>
+          <p class="login-nota" id="loginNota">Sin correo: solo usuario y contraseña.</p>
+        </form>
+      </div>
+    </section>
+
     <!-- ======================= INICIO ======================= -->
-    <section class="pantalla activa" id="pantalla-inicio" aria-labelledby="titulo-inicio">
+    <section class="pantalla" id="pantalla-inicio" aria-labelledby="titulo-inicio">
       <div class="intro">
-        <h1 id="titulo-inicio">Elige una generación.<br />Pelea con lo que te toque.</h1>
-        <p class="bajada">Cada partida arma dos equipos al azar desde la PokeAPI, con movimientos, tipos y estadísticas reales. Gana y entra al ranking.</p>
+        <h1 id="titulo-inicio">Hola, <span id="saludoUsuario">entrenador</span>.</h1>
+        <p class="bajada">Cada partida arma dos equipos al azar desde la PokeAPI, con movimientos, tipos y estadísticas reales. Gana y sube en el ranking.</p>
       </div>
 
       <form class="config" id="formJugar" autocomplete="off">
-        <label class="campo">
-          <span>Tu nombre de entrenador</span>
-          <input id="inputNombre" name="nombre" maxlength="20" minlength="2" required placeholder="Ej. Efraín" />
-        </label>
+        <fieldset class="campo modo">
+          <legend>Modo de juego</legend>
+          <label><input type="radio" name="modo" value="cpu" checked /><span><b>Contra la computadora</b><small>Un rival con IA</small></span></label>
+          <label><input type="radio" name="modo" value="pvp" /><span><b>En línea</b><small id="enLineaTxt">Contra otra persona</small></span></label>
+        </fieldset>
         <fieldset class="campo tamano">
           <legend>Tamaño del equipo</legend>
           <label><input type="radio" name="tamano" value="3" /><span>3 vs 3</span></label>
@@ -119,6 +156,7 @@
           <button class="btn-secundario" id="btnRearmar">Otro equipo</button>
           <button class="btn-primario" id="btnComenzar">Comenzar batalla</button>
         </div>
+        <p class="pv-estado" id="pvEstado" aria-live="polite"></p>
       </div>
     </section>
 

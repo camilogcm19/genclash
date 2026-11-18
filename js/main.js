@@ -1,12 +1,17 @@
 // ============================================================
 //  GenClash · Interfaz y flujo del juego
+//  - Login (usuario y contraseña)
+//  - Modo contra la computadora y modo en línea (jugador vs jugador)
+//  - Batalla animada, ranking y QR
 // ============================================================
 import { GENERACIONES, TODAS, TIPOS, ESTADOS, STATS_ES, STATS_CORTO, CATEGORIAS, NOMBRES_RIVALES, TITULOS_RIVALES, efectividad } from './data.js';
 import { armarEquipo, sprites, aleatorio, contadorPeticiones } from './api.js';
-import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCambio, FORCEJEO, N } from './battle.js';
+import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCambio, otro, FORCEJEO, fmt, rngConSemilla } from './battle.js';
 import { decidirAccion, mejorReemplazo } from './ai.js';
 import * as db from './db.js';
 import { sfx, grito, alternarSonido, estaSilenciado } from './audio.js';
+import { Efectos } from './fx.js';
+import { buscarRival, conectarPresencia } from './online.js';
 import { URL_PUBLICA } from './config.js';
 
 // ---------- Utilidades ----------
@@ -17,21 +22,32 @@ const BALL = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/i
 const reducido = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const estado = {
-  nombre: localStorage.getItem('gc:nombre') || '',
+  usuario: null,
   gen: Number(localStorage.getItem('gc:gen') ?? 1),
   tamano: Number(localStorage.getItem('gc:tamano') || 6),
+  modo: localStorage.getItem('gc:modo') || 'cpu',
   vel: Number(localStorage.getItem('gc:vel') || 1),
   batalla: null,
-  equipos: null,
-  rival: null,
+  miLado: 'player',      // en línea, el invitado juega del lado 'rival' del motor
+  rival: null,           // nombre del rival
   busqueda: 0,
   ocupado: false,
-  mostrado: { player: null, rival: null },
+  mostrado: { player: null, rival: null }, // por lado de PANTALLA
   caidos: { player: new Set(), rival: new Set() },
+  sala: null,
+  pvp: null,
+  desconectarPresencia: () => {},
 };
 
 const genActual = () => (estado.gen === 0 ? TODAS : GENERACIONES.find((g) => g.id === estado.gen) || GENERACIONES[0]);
 const etiquetaGen = (g) => (g.id === 0 ? 'Todas las generaciones' : `Gen ${g.romano} (${g.region})`);
+const genPorId = (id) => (id === 0 ? TODAS : GENERACIONES.find((g) => g.id === id) || GENERACIONES[0]);
+const enPvp = () => estado.modoBatalla === 'pvp';
+
+/** Lado del motor → lado de la pantalla (tu Pokémon siempre abajo a la izquierda). */
+const pantalla = (side) => (side === estado.miLado ? 'player' : 'rival');
+/** Lado de la pantalla → lado del motor. */
+const motor = (lado) => (lado === 'player' ? estado.miLado : otro(estado.miLado));
 
 // Espera que se puede saltar tocando la caja de texto o la arena
 let saltar = null;
@@ -65,10 +81,87 @@ const haceCuanto = (iso) => {
   return `hace ${Math.round(s / 86400)} d`;
 };
 
-function mostrar(pantalla) {
-  $$('.pantalla').forEach((p) => p.classList.toggle('activa', p.id === `pantalla-${pantalla}`));
+function mostrar(p) {
+  $$('.pantalla').forEach((x) => x.classList.toggle('activa', x.id === `pantalla-${p}`));
   window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
 }
+
+// ============================================================
+//  LOGIN
+// ============================================================
+let modoLogin = 'entrar';
+function cambiarModoLogin(m) {
+  modoLogin = m;
+  $('#tabEntrar').classList.toggle('activa', m === 'entrar');
+  $('#tabCrear').classList.toggle('activa', m === 'crear');
+  $('#tabEntrar').setAttribute('aria-selected', String(m === 'entrar'));
+  $('#tabCrear').setAttribute('aria-selected', String(m === 'crear'));
+  $('#campoConfirmar').hidden = m !== 'crear';
+  $('#btnLogin').textContent = m === 'crear' ? 'Crear cuenta' : 'Entrar';
+  $('#loginPassword').autocomplete = m === 'crear' ? 'new-password' : 'current-password';
+  $('#loginNota').textContent = m === 'crear'
+    ? 'Usuario de 3 a 16 letras o números. Contraseña de al menos 4 caracteres.'
+    : 'Sin correo: solo usuario y contraseña.';
+  $('#loginError').textContent = '';
+}
+$('#tabEntrar').addEventListener('click', () => cambiarModoLogin('entrar'));
+$('#tabCrear').addEventListener('click', () => cambiarModoLogin('crear'));
+
+$('#formLogin').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const u = $('#loginUsuario').value; const p = $('#loginPassword').value;
+  const err = $('#loginError');
+  err.textContent = '';
+  if (modoLogin === 'crear' && p !== $('#loginConfirmar').value) { err.textContent = 'Las contraseñas no coinciden.'; return; }
+  const btn = $('#btnLogin'); btn.disabled = true; const txt = btn.textContent; btn.textContent = 'Un momento…';
+  try {
+    const s = modoLogin === 'crear' ? await db.registrar(u, p) : await db.iniciarSesion(u, p);
+    sfx.encontrado();
+    $('#loginPassword').value = ''; $('#loginConfirmar').value = '';
+    entrarAlJuego(s.usuario);
+    if (modoLogin === 'crear') toast(`¡Bienvenido, ${s.usuario}! Tu cuenta quedó creada.`);
+  } catch (ex) {
+    err.textContent = ex.message;
+  } finally { btn.disabled = false; btn.textContent = txt; }
+});
+
+function mostrarLogin() {
+  const d = $('#loginDesfile');
+  if (!d.childElementCount) {
+    const ids = Array.from({ length: 8 }, () => 1 + Math.floor(Math.random() * 1025));
+    d.innerHTML = ids.map((id, i) => `<img src="${sprites(id).frente}" alt="" style="animation-delay:${i * 80}ms" onerror="this.onerror=null;this.src='${sprites(id).frenteFijo}'" />`).join('');
+  }
+  $('#usuarioChip').hidden = true;
+  mostrar('login');
+  setTimeout(() => $('#loginUsuario').focus(), 50);
+}
+
+function entrarAlJuego(usuario) {
+  estado.usuario = usuario;
+  $('#usuarioNombre').textContent = usuario;
+  $('#saludoUsuario').textContent = usuario;
+  $('#usuarioChip').hidden = false;
+  mostrar('inicio');
+  cargarTablero();
+  actualizarRecord();
+  estado.desconectarPresencia();
+  estado.desconectarPresencia = conectarPresencia(usuario, (n) => {
+    $('#enLineaTxt').textContent = n > 1 ? `${n} entrenadores en línea` : 'Contra otra persona';
+  });
+}
+
+$('#btnSalir').addEventListener('click', async () => {
+  if (estado.batalla && !estado.batalla.terminada && $('#pantalla-batalla').classList.contains('activa')) {
+    if (!confirm('Si sales ahora, la batalla cuenta como derrota. ¿Salir?')) return;
+    rendirse(true);
+  }
+  estado.busqueda++;
+  estado.cancelarBusqueda?.();
+  estado.desconectarPresencia(); estado.desconectarPresencia = () => {};
+  await db.cerrarSesion();
+  estado.usuario = null;
+  mostrarLogin();
+});
 
 // ============================================================
 //  INICIO
@@ -108,8 +201,13 @@ function elegirGen(id) {
 
 function actualizarCTA() {
   const g = genActual();
-  $('#txtBuscar').textContent = g.id === 0 ? 'Buscar partida con todas las generaciones' : `Buscar partida en ${g.region}`;
+  const donde = g.id === 0 ? 'con todas las generaciones' : `en ${g.region}`;
+  $('#txtBuscar').textContent = estado.modo === 'pvp' ? `Buscar rival en línea ${donde}` : `Buscar partida ${donde}`;
 }
+
+$$('input[name=modo]').forEach((r) => r.addEventListener('change', () => {
+  estado.modo = r.value; localStorage.setItem('gc:modo', r.value); sfx.click(); actualizarCTA();
+}));
 
 // Navegación con flechas dentro del estante (radiogroup)
 $('#estante').addEventListener('keydown', (e) => {
@@ -122,9 +220,8 @@ $('#estante').addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 
-let tRecord;
 async function actualizarRecord() {
-  const r = await db.recordDe(estado.nombre).catch(() => null);
+  const r = await db.recordDe(estado.usuario).catch(() => null);
   $('#record').textContent = r && (r.victorias || r.derrotas) ? `Tu récord: ${r.victorias} victorias, ${r.derrotas} derrotas` : '';
 }
 
@@ -136,7 +233,7 @@ async function cargarTablero() {
   try {
     const r = await db.obtenerRanking();
     $('#ranking').innerHTML = r.length ? r.map((x, i) => `
-      <li class="${x.jugador === estado.nombre ? 'yo' : ''}">
+      <li class="${x.jugador === estado.usuario ? 'yo' : ''}">
         <span class="pos">${i + 1}</span>
         <span class="nom">${esc(x.jugador)}</span>
         <span class="vd">${x.victorias}–${x.derrotas}</span>
@@ -146,7 +243,7 @@ async function cargarTablero() {
 
   try {
     const lista = await db.obtenerRecientes();
-    $('#recientes').innerHTML = lista.length ? lista.map(itemReciente).join('') : '<li class="vacio">Aquí aparecerán las batallas en cuanto alguien termine una.</li>';
+    $('#recientes').innerHTML = lista.length ? lista.map((p) => itemReciente(p)).join('') : '<li class="vacio">Aquí aparecerán las batallas en cuanto alguien termine una.</li>';
   } catch { $('#recientes').innerHTML = '<li class="vacio">No se pudieron leer las batallas recientes.</li>'; }
 
   try {
@@ -155,7 +252,7 @@ async function cargarTablero() {
     $('#stats').innerHTML = `
       <div><dt>Batallas</dt><dd>${s.total}</dd></div>
       <div><dt>Entrenadores</dt><dd>${s.jugadores}</dd></div>
-      <div><dt>Victorias humanas</dt><dd>${s.porcentajeGlobal}%</dd></div>
+      <div><dt>Duelos en línea</dt><dd>${s.duelos}</dd></div>
       <div><dt>Pokémon más valioso</dt><dd>${mvp ? `<img src="${sprites(mvp.id).icono}" alt="" />${esc(mvp.nombre)}` : '—'}</dd></div>`;
   } catch { $('#stats').innerHTML = ''; }
 }
@@ -163,10 +260,11 @@ async function cargarTablero() {
 function itemReciente(p, nuevo = false) {
   const icono = p.mvp_id ? sprites(p.mvp_id).icono : BALL;
   const verbo = p.resultado === 'victoria' ? 'venció a' : 'perdió contra';
+  const modo = p.modo === 'pvp' ? 'en línea, ' : '';
   return `<li class="${nuevo ? 'nuevo' : ''}">
     <img src="${icono}" alt="" loading="lazy" />
     <span class="linea"><strong>${esc(p.jugador)}</strong> ${verbo} ${esc(p.rival_nombre || 'un rival')}
-      <small>${esc(p.generacion)}, ${p.turnos} turnos, ${haceCuanto(p.creado_en)}</small></span>
+      <small>${modo}${esc(p.generacion)}, ${p.turnos} turnos, ${haceCuanto(p.creado_en)}</small></span>
     <span class="res ${p.resultado}">${p.resultado === 'victoria' ? 'V' : 'D'}</span>
   </li>`;
 }
@@ -182,7 +280,7 @@ function prepararQR() {
   const local = /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || location.protocol === 'file:';
   const aviso = $('#qrAviso');
   aviso.hidden = !(local && !URL_PUBLICA);
-  aviso.textContent = 'Estás abriendo el juego desde tu computadora: este QR apunta aquí y no abrirá en otros teléfonos. Publica el proyecto en Vercel o Netlify, o escribe la URL pública en js/config.js.';
+  aviso.textContent = 'Estás abriendo el juego desde tu computadora: este QR apunta aquí y no abrirá en otros teléfonos. Abre la versión publicada o escribe la URL pública en js/config.js.';
 }
 
 $('#btnQR').addEventListener('click', () => {
@@ -215,40 +313,39 @@ const TIPS = [
   'Los niveles se balancean como en los combates aleatorios: los legendarios pelean a menor nivel.',
   'Pulsa 1, 2, 3 o 4 para atacar rápido desde el teclado.',
   'Toca la caja de texto para adelantar los mensajes.',
+  'En línea, cada turno tiene un minuto: si no eliges, se elige solo.',
 ];
 
 $('#formJugar').addEventListener('submit', (e) => {
   e.preventDefault();
-  const nombre = $('#inputNombre').value.trim().replace(/\s+/g, ' ');
-  if (nombre.length < 2) { $('#inputNombre').focus(); toast('Escribe un nombre de entrenador de al menos 2 letras.'); return; }
-  estado.nombre = nombre.slice(0, 20);
-  localStorage.setItem('gc:nombre', estado.nombre);
+  if (!estado.usuario) { mostrarLogin(); return; }
   estado.tamano = Number(new FormData(e.target).get('tamano')) || 6;
   localStorage.setItem('gc:tamano', estado.tamano);
-  buscarPartida();
+  if (estado.modo === 'pvp') buscarPartidaEnLinea(); else buscarPartida();
 });
 
-async function buscarPartida() {
-  const id = ++estado.busqueda;
-  const g = genActual();
-  const tam = estado.tamano;
-  estado.rival = `${aleatorio(TITULOS_RIVALES)} ${aleatorio(NOMBRES_RIVALES)}`;
+let rotarTips = null;
+function pantallaBusqueda(titulo, detalle) {
   mostrar('busqueda');
-  $('#busquedaTitulo').textContent = g.id === 0 ? 'Buscando rival en todas las generaciones…' : `Buscando rival en ${g.region}…`;
-  $('#busquedaDetalle').textContent = 'Conectando con la PokeAPI';
+  $('#busquedaTitulo').textContent = titulo;
+  $('#busquedaDetalle').textContent = detalle;
   $('#desfile').innerHTML = '';
-  const barra = $('#barraProgreso');
-  barra.firstElementChild.style.width = '0%';
+  $('#barraProgreso').firstElementChild.style.width = '0%';
   let tipI = Math.floor(Math.random() * TIPS.length);
   $('#tip').textContent = TIPS[tipI];
-  const rotar = setInterval(() => { tipI = (tipI + 1) % TIPS.length; $('#tip').textContent = TIPS[tipI]; }, 3200);
+  clearInterval(rotarTips);
+  rotarTips = setInterval(() => { tipI = (tipI + 1) % TIPS.length; $('#tip').textContent = TIPS[tipI]; }, 3200);
+}
 
-  const listos = { player: 0, rival: 0 };
+/** Arma dos equipos con barra de progreso. */
+async function armarDosEquipos(g, tam, id) {
+  const listos = { a: 0, b: 0 };
   const total = tam * 2;
-  const progreso = (side) => ({ ultimo }) => {
+  const barra = $('#barraProgreso');
+  const progreso = (k) => ({ ultimo }) => {
     if (id !== estado.busqueda) return;
-    listos[side]++;
-    const n = listos.player + listos.rival;
+    listos[k]++;
+    const n = listos.a + listos.b;
     barra.firstElementChild.style.width = `${(n / total) * 100}%`;
     barra.setAttribute('aria-valuenow', Math.round((n / total) * 100));
     $('#busquedaDetalle').textContent = `Preparando equipos: ${n} de ${total} Pokémon (${contadorPeticiones()} consultas a la API)`;
@@ -258,13 +355,18 @@ async function buscarPartida() {
       $('#desfile').append(img);
     }
   };
+  return Promise.all([armarEquipo(g.id, tam, progreso('a')), armarEquipo(g.id, tam, progreso('b'))]);
+}
 
+async function buscarPartida() {
+  const id = ++estado.busqueda;
+  const g = genActual();
+  const tam = estado.tamano;
+  estado.rival = `${aleatorio(TITULOS_RIVALES)} ${aleatorio(NOMBRES_RIVALES)}`;
+  pantallaBusqueda(g.id === 0 ? 'Buscando rival en todas las generaciones…' : `Buscando rival en ${g.region}…`, 'Conectando con la PokeAPI');
   const inicio = performance.now();
   try {
-    const [eqJ, eqR] = await Promise.all([
-      armarEquipo(g.id, tam, progreso('player')),
-      armarEquipo(g.id, tam, progreso('rival')),
-    ]);
+    const [eqJ, eqR] = await armarDosEquipos(g, tam, id);
     if (id !== estado.busqueda) return;
     const minimo = 1400 - (performance.now() - inicio);
     if (minimo > 0) await new Promise((ok) => setTimeout(ok, minimo));
@@ -273,7 +375,9 @@ async function buscarPartida() {
     sfx.encontrado();
     await new Promise((ok) => setTimeout(ok, 900));
     if (id !== estado.busqueda) return;
-    estado.equipos = { player: eqJ, rival: eqR };
+    estado.modoBatalla = 'cpu';
+    estado.miLado = 'player';
+    estado.batalla = crearBatalla({ equipoJugador: eqJ, equipoRival: eqR, nombreJugador: estado.usuario, nombreRival: estado.rival, generacion: g.id });
     mostrarPreview();
   } catch (err) {
     console.error(err);
@@ -281,11 +385,163 @@ async function buscarPartida() {
     toast(err.message || 'No se pudo armar la partida. Revisa tu conexión e inténtalo otra vez.', 6000);
     mostrar('inicio');
   } finally {
-    clearInterval(rotar);
+    clearInterval(rotarTips);
   }
 }
 
-$('#btnCancelarBusqueda').addEventListener('click', () => { estado.busqueda++; mostrar('inicio'); });
+$('#btnCancelarBusqueda').addEventListener('click', () => {
+  estado.busqueda++;
+  estado.cancelarBusqueda?.();
+  cerrarSala();
+  clearInterval(rotarTips);
+  mostrar('inicio');
+});
+
+// ------------------------------------------------------------
+//  EN LÍNEA: emparejamiento y sala
+// ------------------------------------------------------------
+const quitarPesado = (b) => { const { movimientos, ...resto } = b; return resto; };
+
+function cerrarSala() {
+  if (estado.pvp?.reloj) clearInterval(estado.pvp.reloj);
+  if (estado.pvp?.graciaAbandono) clearTimeout(estado.pvp.graciaAbandono);
+  estado.sala?.cerrar();
+  estado.sala = null;
+}
+
+async function buscarPartidaEnLinea() {
+  if (!db.enLinea()) { toast('El modo en línea necesita Supabase configurado.'); return; }
+  const id = ++estado.busqueda;
+  const g = genActual();
+  const tam = estado.tamano;
+  cerrarSala();
+  pantallaBusqueda(
+    g.id === 0 ? 'Buscando otro entrenador (todas las generaciones)…' : `Buscando otro entrenador en ${g.region}…`,
+    `Esperando a alguien que busque ${tam} contra ${tam} en la misma generación.`,
+  );
+  const busq = buscarRival({
+    gen: g.id, tamano: tam, usuario: estado.usuario,
+    alActualizar: ({ esperando }) => {
+      if (id !== estado.busqueda) return;
+      $('#busquedaDetalle').textContent = esperando > 1
+        ? `${esperando} entrenadores buscando aquí. Emparejando…`
+        : `Eres el único buscando ${tam} contra ${tam} aquí. Comparte el QR para que alguien se una.`;
+    },
+  });
+  estado.cancelarBusqueda = busq.cancelar;
+
+  let sala;
+  try { sala = await busq.promesa; } catch (e) {
+    if (e.cancelado || id !== estado.busqueda) return;
+    toast(e.message, 6000); mostrar('inicio'); return;
+  } finally { estado.cancelarBusqueda = null; }
+  if (id !== estado.busqueda) { sala.cerrar(); return; }
+
+  estado.sala = sala;
+  estado.rival = sala.rival.usuario;
+  sfx.encontrado();
+  $('#busquedaTitulo').textContent = `¡Rival encontrado: ${estado.rival}!`;
+  configurarSala(sala);
+
+  if (sala.soyHost) {
+    try {
+      const [eqA, eqB] = await armarDosEquipos(g, tam, id);
+      if (id !== estado.busqueda || sala.cerrada) return;
+      const datos = {
+        semilla: Math.floor(Math.random() * 2 ** 31), gen: g.id, tamano: tam,
+        host: estado.usuario, invitado: estado.rival,
+        equipos: { player: eqA.map(quitarPesado), rival: eqB.map(quitarPesado) },
+      };
+      sala.on('hola', () => sala.enviar('inicio', datos)); // por si el primer mensaje se perdió
+      await sala.enviar('inicio', datos);
+      prepararBatallaEnLinea(datos, 'player');
+    } catch (e) {
+      sala.enviar('error', { mensaje: 'Tu rival no pudo cargar los Pokémon.' });
+      toast(e.message, 6000); cerrarSala(); mostrar('inicio');
+    }
+  } else {
+    $('#busquedaDetalle').textContent = `${estado.rival} está preparando los equipos…`;
+    const limite = setTimeout(() => {
+      if (id === estado.busqueda && estado.batalla?.sala !== sala.id) { toast('El rival tardó demasiado. Busca otra vez.'); cerrarSala(); mostrar('inicio'); }
+    }, 45000);
+    sala.on('inicio', (datos) => {
+      clearTimeout(limite);
+      if (id !== estado.busqueda || estado.batalla?.sala === sala.id) return;
+      prepararBatallaEnLinea(datos, 'rival');
+    });
+  }
+}
+
+function prepararBatallaEnLinea(datos, lado) {
+  clearInterval(rotarTips);
+  estado.gen = datos.gen;
+  estado.modoBatalla = 'pvp';
+  estado.miLado = lado;
+  estado.batalla = crearBatalla({
+    equipoJugador: datos.equipos.player, equipoRival: datos.equipos.rival,
+    nombreJugador: datos.host, nombreRival: datos.invitado, generacion: datos.gen,
+    rng: rngConSemilla(datos.semilla),
+  });
+  estado.batalla.sala = estado.sala.id;
+  estado.pvp = { acciones: {}, reemplazos: {}, aplicados: new Set(), listoYo: false, listoRival: false, fase: 'preview', reloj: null };
+  mostrarPreview();
+}
+
+function configurarSala(sala) {
+  sala.on('listo', () => {
+    if (!estado.pvp) return;
+    estado.pvp.listoRival = true;
+    if (estado.pvp.fase === 'preview') {
+      $('#pvEstado').textContent = estado.pvp.listoYo ? '' : `${estado.rival} ya está listo.`;
+      intentarEmpezarEnLinea();
+    }
+  });
+  sala.on('accion', ({ turno, accion }) => {
+    if (!estado.pvp) return;
+    (estado.pvp.acciones[turno] ||= {})[otro(estado.miLado)] = accion;
+    intentarResolverTurno(turno);
+  });
+  sala.on('reemplazo', ({ clave, lado, indice }) => {
+    if (!estado.pvp) return;
+    (estado.pvp.reemplazos[clave] ||= {})[lado] = indice;
+    intentarReemplazos();
+  });
+  sala.on('rendicion', () => {
+    const b = estado.batalla;
+    if (!b || b.terminada || b.sala !== sala.id) return;
+    b.terminada = true; b.ganador = estado.miLado; b.motivo = 'rendicion';
+    toast(`${estado.rival} se rindió.`);
+    finalizar();
+  });
+  sala.on('error', ({ mensaje }) => { toast(mensaje || 'Hubo un problema con la partida.'); cerrarSala(); mostrar('inicio'); });
+  sala.alSalirRival = () => {
+    const b = estado.batalla;
+    if (!b || b.terminada || b.sala !== sala.id) {
+      if ($('#pantalla-busqueda').classList.contains('activa') || $('#pantalla-preview').classList.contains('activa')) {
+        toast(`${estado.rival} se desconectó.`); cerrarSala(); mostrar('inicio');
+      }
+      return;
+    }
+    toast(`${estado.rival} perdió la conexión. Esperando 20 segundos…`);
+    estado.pvp.graciaAbandono = setTimeout(() => {
+      if (b.terminada) return;
+      b.terminada = true; b.ganador = estado.miLado; b.motivo = 'abandono';
+      finalizar();
+    }, 20000);
+  };
+  sala.alVolverRival = () => {
+    if (estado.pvp?.graciaAbandono) { clearTimeout(estado.pvp.graciaAbandono); estado.pvp.graciaAbandono = null; toast(`${estado.rival} volvió.`); }
+  };
+}
+
+function intentarEmpezarEnLinea() {
+  const p = estado.pvp;
+  if (p.fase === 'preview' && p.listoYo && p.listoRival) {
+    p.fase = 'batalla';
+    clearTimeout(p.autoListo);
+    iniciarBatalla();
+  }
+}
 
 // ============================================================
 //  VISTA PREVIA DE EQUIPOS
@@ -299,24 +555,43 @@ function tarjetaPreview(p, side, i) {
 }
 
 function mostrarPreview() {
-  const g = genActual();
-  $('#pvJugador').textContent = estado.nombre;
-  $('#pvRival').textContent = estado.rival;
-  $('#pvGen').textContent = `${etiquetaGen(g)}, ${estado.tamano} contra ${estado.tamano}`;
-  $('#pvEquipoJ').innerHTML = estado.equipos.player.map((p, i) => tarjetaPreview(p, 'player', i)).join('');
-  $('#pvEquipoR').innerHTML = estado.equipos.rival.map((p, i) => tarjetaPreview(p, 'rival', i)).join('');
+  const b = estado.batalla;
+  const g = genPorId(b.generacion);
+  const mio = estado.miLado; const suyo = otro(mio);
+  const n = b.lados[mio].equipo.length;
+  $('#pvJugador').textContent = estado.usuario;
+  $('#pvRival').innerHTML = `${esc(estado.rival)}${enPvp() ? ' <span class="en-linea">EN LÍNEA</span>' : ''}`;
+  $('#pvGen').textContent = `${etiquetaGen(g)}, ${n} contra ${n}`;
+  $('#pvEquipoJ').innerHTML = b.lados[mio].equipo.map((p, i) => tarjetaPreview(p, mio, i)).join('');
+  $('#pvEquipoR').innerHTML = b.lados[suyo].equipo.map((p, i) => tarjetaPreview(p, suyo, i)).join('');
   $('#pvTituloRival').textContent = `Equipo de ${estado.rival}`;
+  $('#btnRearmar').hidden = enPvp();
+  $('#btnComenzar').disabled = false;
+  $('#btnComenzar').textContent = enPvp() ? '¡Estoy listo!' : 'Comenzar batalla';
+  $('#pvEstado').textContent = enPvp() ? 'La batalla empieza cuando los dos estén listos.' : '';
   mostrar('preview');
+  if (enPvp()) estado.pvp.autoListo = setTimeout(() => { if (!estado.pvp.listoYo) $('#btnComenzar').click(); }, 30000);
   $('#btnComenzar').focus();
 }
 
 $('#pantalla-preview').addEventListener('click', (e) => {
-  const b = e.target.closest('button[data-side]');
-  if (!b) return;
-  abrirInfo(estado.equipos[b.dataset.side][Number(b.dataset.i)], b.dataset.side === 'player');
+  const bt = e.target.closest('button[data-side]');
+  if (!bt) return;
+  const p = estado.batalla.lados[bt.dataset.side].equipo[Number(bt.dataset.i)];
+  abrirInfo(p, bt.dataset.side === estado.miLado);
 });
 $('#btnRearmar').addEventListener('click', buscarPartida);
-$('#btnComenzar').addEventListener('click', iniciarBatalla);
+$('#btnComenzar').addEventListener('click', () => {
+  if (!enPvp()) { iniciarBatalla(); return; }
+  if (estado.pvp.listoYo) return;
+  estado.pvp.listoYo = true;
+  sfx.click();
+  $('#btnComenzar').disabled = true;
+  $('#btnComenzar').textContent = 'Listo';
+  $('#pvEstado').textContent = estado.pvp.listoRival ? '' : `Esperando a que ${estado.rival} esté listo…`;
+  estado.sala?.enviar('listo');
+  intentarEmpezarEnLinea();
+});
 
 function abrirInfo(p, verMovs) {
   const color = (v) => (v >= 120 ? '#52d273' : v >= 90 ? '#a6e05b' : v >= 60 ? '#f5c518' : '#ff8a5b');
@@ -349,51 +624,50 @@ function abrirInfo(p, verMovs) {
 //  BATALLA
 // ============================================================
 const arena = $('#arena');
+const fx = new Efectos(arena);
+fx.vel = estado.vel;
 const slot = { player: $('#slotJugador'), rival: $('#slotRival') };
 const hpbox = { player: $('#hpJugador'), rival: $('#hpRival') };
 const spriteDe = (side) => slot[side].querySelector('.sprite');
 
 function iniciarBatalla() {
-  const g = genActual();
+  const b = estado.batalla;
+  const g = genPorId(b.generacion);
   arena.style.setProperty('--c1', g.tema[0]);
   arena.style.setProperty('--c2', g.tema[1]);
-  estado.batalla = crearBatalla({
-    equipoJugador: estado.equipos.player, equipoRival: estado.equipos.rival,
-    nombreJugador: estado.nombre, nombreRival: estado.rival, generacion: g.id,
-  });
   estado.caidos = { player: new Set(), rival: new Set() };
   estado.mostrado = { player: null, rival: null };
   $('#log').innerHTML = '';
   $('#turnoChip').textContent = 'Turno 1';
   for (const s of ['player', 'rival']) { spriteDe(s).className = 'sprite'; hpbox[s].classList.remove('visible'); }
+  $('#btnRevancha').textContent = enPvp() ? 'Buscar otro rival' : 'Revancha';
   mostrar('batalla');
   ajustarEscala();
   bloquear(true);
 
-  const b = estado.batalla;
-  const R = activo(b, 'rival'); const P = activo(b, 'player');
+  const mio = estado.miLado; const suyo = otro(mio);
+  const R = activo(b, suyo); const P = activo(b, mio);
   R.vecesUsado = 1; P.vecesUsado = 1;
   reproducir([
-    { t: 'msg', texto: `¡${estado.rival} quiere pelear!` },
+    { t: 'msg', texto: enPvp() ? `¡Duelo en línea contra ${estado.rival}!` : `¡${estado.rival} quiere pelear!` },
     { t: 'msg', texto: `¡${estado.rival} envió a ${R.nombre}!` },
-    { t: 'entrar', side: 'rival', mon: R, hp: R.hp, maxHp: R.maxHp, estado: null },
+    { t: 'entrar', side: suyo, mon: R, hp: R.hp, maxHp: R.maxHp, estado: null },
     { t: 'msg', texto: `¡Adelante, ${P.nombre}!` },
-    { t: 'entrar', side: 'player', mon: P, hp: P.hp, maxHp: P.maxHp, estado: null },
+    { t: 'entrar', side: mio, mon: P, hp: P.hp, maxHp: P.maxHp, estado: null },
   ]).then(mostrarMenu);
 }
 
 // Escala de sprites según el tamaño de la arena
+const escalaArena = () => Math.max(1.15, Math.min(2.2, (arena.clientWidth || 700) / 400));
 function ajustarEscala() {
-  const w = arena.clientWidth || 700;
   arena.style.setProperty('--k', escalaArena().toFixed(2));
   for (const s of ['player', 'rival']) limitarSprite(s);
 }
-const escalaArena = () => Math.max(1.15, Math.min(2.2, (arena.clientWidth || 700) / 400));
 function limitarSprite(side) {
   const img = spriteDe(side);
   const nw = Number(img.dataset.nw || 64);
-  const k = escalaArena() * (side === 'player' ? 1.3 : 1);
-  const max = arena.clientWidth * (side === 'player' ? 0.46 : 0.38);
+  const k = escalaArena() * (side === 'player' ? 1.15 : 1);
+  const max = arena.clientWidth * (side === 'player' ? 0.42 : 0.36);
   img.style.width = `${Math.min(nw * k, max)}px`;
 }
 new ResizeObserver(ajustarEscala).observe(arena);
@@ -441,7 +715,7 @@ function renderHp(side) {
     const mult = v > 0 ? (2 + v) / 2 : 2 / (2 - v);
     return `<span class="boost ${v < 0 ? 'neg' : ''}">${STATS_CORTO[k]} ×${mult.toFixed(mult % 1 ? 2 : 0).replace(/0$/, '')}</span>`;
   }).join('');
-  const equipo = estado.batalla.lados[side].equipo;
+  const equipo = estado.batalla.lados[motor(side)].equipo;
   const puntos = equipo.map((_, i) => `<img src="${BALL}" alt="" class="${estado.caidos[side].has(i) ? 'caido' : ''}" />`).join('');
   hpbox[side].innerHTML = `
     <div class="hp-top"><span class="nombre">${esc(mon.nombre)}</span><span class="nivel">Nv. ${mon.level}</span></div>
@@ -489,45 +763,21 @@ function flotante(side, texto, cls) {
   if (reducido) setTimeout(() => el.remove(), 800);
 }
 
-function chispas(side, color, n = 10, sube = false) {
-  const c = centro(side);
-  for (let i = 0; i < n; i++) {
-    const el = particula('chispa', c.x + (Math.random() - 0.5) * c.w * 0.5, c.y + (Math.random() - 0.5) * c.h * 0.4, color);
-    const ang = Math.random() * Math.PI * 2; const d = 30 + Math.random() * 50;
-    const dx = sube ? (Math.random() - 0.5) * 30 : Math.cos(ang) * d;
-    const dy = sube ? -(40 + Math.random() * 60) : Math.sin(ang) * d;
-    anim(el, [{ transform: 'translate(0,0) scale(1)', opacity: 1 }, { transform: `translate(${dx}px,${dy}px) scale(.2) rotate(${Math.random() * 360}deg)`, opacity: 0 }], { duration: 600 + Math.random() * 300 })
-      .then(() => el.remove());
-    if (reducido) el.remove();
-  }
-}
-
 async function animAtaque(side, move) {
   const img = spriteDe(side);
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   const dir = side === 'player' ? [1, -1] : [-1, 1];
-  const fisico = move.category === 'physical';
-  const dist = fisico ? 26 : 10;
-  const color = TIPOS[move.type]?.color || '#fff';
-  const ida = anim(img, [
+  const contacto = move.category === 'physical';
+  const dist = contacto ? 26 : 8;
+  const embestida = anim(img, [
     { transform: `translate(0,0)${espejo}` },
     { transform: `translate(${dir[0] * dist}%, ${dir[1] * dist * 0.5}%)${espejo}`, offset: 0.4 },
     { transform: `translate(0,0)${espejo}` },
-  ], { duration: fisico ? 380 : 300 });
-
-  if (move.category === 'status') {
-    const haciaMi = ['user', 'users-field', 'user-and-allies'].includes(move.target);
-    if (haciaMi) { chispas(side, color, 12, true); await ida; await espera(200); return; }
-  }
-  if (!fisico) {
-    sfx.disparo();
-    const a = centro(side); const b = centro(side === 'player' ? 'rival' : 'player');
-    const orbe = particula('orbe', a.x, a.y, color);
-    await anim(orbe, [{ transform: `translate(0,0) scale(.4)` }, { transform: `translate(${b.x - a.x}px, ${b.y - a.y}px) scale(1.2)` }], { duration: 380, easing: 'ease-in' });
-    orbe.remove();
-  } else {
-    await ida;
-  }
+  ], { duration: contacto ? 380 : 300 });
+  if (contacto) await espera(150);
+  if (move.category !== 'status' || move.power) sfx.disparo();
+  await fx.animar(move, centro(side), centro(side === 'player' ? 'rival' : 'player'));
+  await embestida;
 }
 
 async function animDanio(e) {
@@ -535,18 +785,10 @@ async function animDanio(e) {
   m.hp = e.hp;
   const img = spriteDe(e.side);
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
-  const color = TIPOS[e.tipo]?.color || '#fff';
-  if (!e.residual) {
-    const c = centro(e.side);
-    const est = particula('estallido', c.x, c.y, color);
-    anim(est, [{ transform: 'scale(.3)', opacity: 1 }, { transform: 'scale(5)', opacity: 0 }], { duration: 450 }).then(() => est.remove());
-    if (reducido) est.remove();
-    chispas(e.side, color, e.eff > 1 ? 16 : 9);
-    sfx.golpe(e.eff ?? 1);
-  } else {
-    chispas(e.side, ESTADOS[e.estado]?.color || '#a33ea1', 8, true);
-    sfx.golpe(0.5);
-  }
+  const c = centro(e.side);
+  if (e.residual) fx.estado(e.estado === 'burn' ? 'fire' : 'poison', c);
+  else fx.golpecito(e.tipo || 'normal', c);
+  sfx.golpe(e.residual ? 0.5 : (e.eff ?? 1));
   if (e.critico) {
     const f = document.createElement('div'); f.className = 'destello'; arena.append(f); setTimeout(() => f.remove(), 350);
   }
@@ -560,7 +802,7 @@ async function animDanio(e) {
 
 async function animCurar(e) {
   estado.mostrado[e.side].hp = e.hp;
-  chispas(e.side, '#7dffa6', 14, true);
+  fx.animar({ name: 'recover', type: 'grass', category: 'status', target: 'user', meta: { category: 'heal' } }, centro(e.side), centro(e.side));
   sfx.curar();
   actualizarBarra(e.side);
   flotante(e.side, `+${Math.max(1, Math.round((e.cantidad / e.maxHp) * 100))}%`, 'cura');
@@ -583,9 +825,7 @@ async function animEntrar(e) {
   sfx.entrar();
   await anim(ball, [{ transform: 'translateY(-90px) rotate(-200deg)', opacity: 0 }, { transform: 'translateY(0) rotate(0)', opacity: 1 }], { duration: 320, easing: 'cubic-bezier(.3,1.6,.6,1)' });
   ball.remove();
-  const f = particula('estallido', c.x, c.y, '#ffffff');
-  anim(f, [{ transform: 'scale(.5)', opacity: 1 }, { transform: 'scale(6)', opacity: 0 }], { duration: 380 }).then(() => f.remove());
-  if (reducido) f.remove();
+  fx.golpecito('normal', c);
   img.classList.add('visible');
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   grito(e.mon.grito);
@@ -606,7 +846,7 @@ async function animDebil(side) {
   const img = spriteDe(side);
   const m = estado.mostrado[side];
   m.hp = 0; m.estado = null;
-  estado.caidos[side].add(estado.batalla.lados[side].equipo.indexOf(m.mon));
+  estado.caidos[side].add(estado.batalla.lados[motor(side)].equipo.indexOf(m.mon));
   grito(m.mon.grito, { velocidad: 0.75, volumen: 0.3 });
   sfx.debilitado();
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
@@ -635,23 +875,28 @@ async function animStat(e) {
 
 async function animMini(e) {
   if (e.tipo === 'dormir') flotante(e.side, 'Z z z', 'baja');
-  if (e.tipo === 'paralisis') chispas(e.side, '#F7D02C', 14);
+  if (e.tipo === 'paralisis') fx.estado('electric', centro(e.side));
   if (e.tipo === 'confuso') flotante(e.side, '? ? ?', 'crit');
   await espera(350);
 }
 
 const lcd = $('#lcd');
-function decir(texto, cls = '') {
+function decir(textoCrudo, cls = '') {
+  const texto = fmt(textoCrudo, estado.miLado);
   if (cls !== 'detalle') $('#lcdTexto').textContent = texto;
   const li = document.createElement('li');
   li.textContent = texto;
   if (cls) li.className = cls;
   const log = $('#log'); log.append(li); log.scrollTop = log.scrollHeight;
+  return texto;
 }
 lcd.addEventListener('click', () => saltar?.());
 arena.addEventListener('click', () => saltar?.());
 
-async function reproducir(eventos) {
+async function reproducir(eventosMotor) {
+  // Los eventos vienen con lados del motor: se traducen a lados de la pantalla
+  const eventos = eventosMotor.map((e) => (e.side ? { ...e, side: pantalla(e.side) } : e));
+  estado.reproduciendo = true;
   lcd.classList.add('espera');
   for (let i = 0; i < eventos.length; i++) {
     const e = eventos[i];
@@ -662,10 +907,11 @@ async function reproducir(eventos) {
         $('#turnoChip').textContent = `Turno ${e.n}`;
         break;
       }
-      case 'msg':
-        decir(e.texto, e.cls);
-        if (e.cls !== 'detalle') await espera(Math.min(1500, 620 + e.texto.length * 14));
+      case 'msg': {
+        const texto = decir(e.texto, e.cls);
+        if (e.cls !== 'detalle') await espera(Math.min(1500, 620 + texto.length * 14));
         break;
+      }
       case 'mover': {
         const sig = eventos[i + 1];
         if (sig?.t === 'msg') { decir(sig.texto, sig.cls); i++; }
@@ -678,7 +924,7 @@ async function reproducir(eventos) {
       case 'estado':
         estado.mostrado[e.side].estado = e.estado;
         renderHp(e.side);
-        if (e.estado) { sfx.estado(); chispas(e.side, ESTADOS[e.estado].color, 12, true); }
+        if (e.estado) { sfx.estado(); fx.estado({ burn: 'fire', paralysis: 'electric', poison: 'poison', toxic: 'poison', sleep: 'normal', freeze: 'ice' }[e.estado] || 'normal', centro(e.side)); }
         break;
       case 'stat': await animStat(e); break;
       case 'debilitado': await animDebil(e.side); break;
@@ -690,6 +936,7 @@ async function reproducir(eventos) {
     }
   }
   lcd.classList.remove('espera');
+  estado.reproduciendo = false;
 }
 
 // ---------- Menú del jugador ----------
@@ -698,11 +945,30 @@ function bloquear(si) {
   $('#controles').classList.toggle('bloqueado', si);
 }
 
+function reloj(segundos, alTerminar) {
+  const p = estado.pvp;
+  if (!p) return;
+  clearInterval(p.reloj);
+  let el = $('#reloj');
+  if (!el) { el = document.createElement('span'); el.id = 'reloj'; el.className = 'reloj'; $('#cambiosTitulo').after(el); }
+  let quedan = segundos;
+  const pintar = () => { el.textContent = `${quedan}s`; el.classList.toggle('urgente', quedan <= 10); };
+  pintar();
+  p.reloj = setInterval(() => {
+    quedan--; pintar();
+    if (quedan <= 0) { clearInterval(p.reloj); el.textContent = ''; alTerminar(); }
+  }, 1000);
+}
+function detenerReloj() {
+  if (estado.pvp?.reloj) clearInterval(estado.pvp.reloj);
+  const el = $('#reloj'); if (el) el.textContent = '';
+}
+
 function mostrarMenu() {
   const b = estado.batalla;
   if (!b || b.terminada) return;
-  const yo = activo(b, 'player');
-  const foe = activo(b, 'rival');
+  const yo = activo(b, estado.miLado);
+  const foe = activo(b, otro(estado.miLado));
   $('#lcdTexto').textContent = `¿Qué debería hacer ${yo.nombre}?`;
   $('#controles').classList.remove('forzar');
   $('.cambios-titulo').classList.remove('forzado');
@@ -723,11 +989,18 @@ function mostrarMenu() {
   }).join('');
   renderCambios(false);
   bloquear(false);
+  if (enPvp()) {
+    estado.pvp.fase = 'menu';
+    reloj(60, () => {
+      const usable = yo.moves.findIndex((m) => m.ppLeft > 0);
+      accionJugador({ tipo: 'mover', indice: usable });
+    });
+  }
 }
 
 function renderCambios(forzado) {
   const b = estado.batalla;
-  const lado = b.lados.player;
+  const lado = b.lados[estado.miLado];
   $('#cambios').innerHTML = lado.equipo.map((p, i) => {
     const pct = Math.round((p.hp / p.maxHp) * 100);
     const act = i === lado.activo && p.hp > 0;
@@ -747,8 +1020,30 @@ async function accionJugador(accion) {
   if (estado.ocupado || !b || b.terminada) return;
   sfx.click();
   bloquear(true);
+  if (enPvp()) {
+    detenerReloj();
+    const turno = b.turno + 1;
+    (estado.pvp.acciones[turno] ||= {})[estado.miLado] = accion;
+    estado.pvp.fase = 'esperando';
+    $('#lcdTexto').textContent = `Esperando a que ${estado.rival} elija…`;
+    estado.sala?.enviar('accion', { turno, accion });
+    intentarResolverTurno(turno);
+    return;
+  }
   const accR = decidirAccion(b, 'rival');
   const ev = ejecutarTurno(b, accion, accR);
+  await reproducir(ev);
+  await despuesDelTurno();
+}
+
+/** En línea: cuando ya están las dos acciones del turno, los dos navegadores lo ejecutan igual. */
+async function intentarResolverTurno(turno) {
+  const b = estado.batalla; const p = estado.pvp;
+  if (!b || b.terminada || !p || p.fase !== 'esperando' || b.turno !== turno - 1) return;
+  const acc = p.acciones[turno];
+  if (!acc?.player || !acc?.rival) return;
+  p.fase = 'turno';
+  const ev = ejecutarTurno(b, acc.player, acc.rival);
   await reproducir(ev);
   await despuesDelTurno();
 }
@@ -756,17 +1051,65 @@ async function accionJugador(accion) {
 async function despuesDelTurno() {
   const b = estado.batalla;
   if (b.terminada) return finalizar();
+
+  if (enPvp()) {
+    const necesitan = ['player', 'rival'].filter((s) => activo(b, s).hp <= 0);
+    if (!necesitan.length) { mostrarMenu(); return; }
+    const clave = `r${b.turno}`;
+    estado.pvp.fase = 'reemplazo';
+    estado.pvp.claveReemplazo = clave;
+    const elegidos = (estado.pvp.reemplazos[clave] ||= {});
+    if (necesitan.includes(estado.miLado) && elegidos[estado.miLado] == null) {
+      pedirReemplazo();
+      reloj(30, () => elegirReemplazoEnLinea(opcionesCambio(b, estado.miLado)[0]));
+    } else {
+      bloquear(true);
+      $('#lcdTexto').textContent = `Esperando a que ${estado.rival} elija su siguiente Pokémon…`;
+    }
+    intentarReemplazos();
+    return;
+  }
+
   if (activo(b, 'rival').hp <= 0) {
     await reproducir(cambioForzado(b, 'rival', mejorReemplazo(b, 'rival')));
   }
-  if (b.pendiente === 'player') {
-    $('#lcdTexto').textContent = '¿Qué Pokémon vas a enviar?';
-    $('.cambios-titulo').classList.add('forzado');
-    $('#cambiosTitulo').textContent = 'Elige a tu siguiente Pokémon';
-    renderCambios(true);
-    bloquear(false);
-    return;
-  }
+  if (b.pendiente === 'player') { pedirReemplazo(); return; }
+  mostrarMenu();
+}
+
+function pedirReemplazo() {
+  $('#lcdTexto').textContent = '¿Qué Pokémon vas a enviar?';
+  $('.cambios-titulo').classList.add('forzado');
+  $('#cambiosTitulo').textContent = 'Elige a tu siguiente Pokémon';
+  renderCambios(true);
+  bloquear(false);
+}
+
+function elegirReemplazoEnLinea(indice) {
+  const p = estado.pvp;
+  const clave = p.claveReemplazo;
+  if ((p.reemplazos[clave] ||= {})[estado.miLado] != null) return;
+  detenerReloj();
+  bloquear(true);
+  p.reemplazos[clave][estado.miLado] = indice;
+  estado.sala?.enviar('reemplazo', { clave, lado: estado.miLado, indice });
+  $('#lcdTexto').textContent = `Esperando a ${estado.rival}…`;
+  intentarReemplazos();
+}
+
+async function intentarReemplazos() {
+  const b = estado.batalla; const p = estado.pvp;
+  if (!b || b.terminada || !p || p.fase !== 'reemplazo') return;
+  const clave = p.claveReemplazo;
+  if (p.aplicados.has(clave)) return;
+  const necesitan = ['player', 'rival'].filter((s) => activo(b, s).hp <= 0);
+  const elegidos = p.reemplazos[clave] || {};
+  if (!necesitan.every((s) => elegidos[s] != null)) return;
+  p.aplicados.add(clave);
+  p.fase = 'turno';
+  const ev = [];
+  for (const s of necesitan) ev.push(...cambioForzado(b, s, elegidos[s]));
+  await reproducir(ev);
   mostrarMenu();
 }
 
@@ -780,13 +1123,15 @@ $('#cambios').addEventListener('click', async (e) => {
   if (!btn || btn.disabled || estado.ocupado) return;
   const i = Number(btn.dataset.cambio);
   const b = estado.batalla;
-  if (b.pendiente === 'player') {
+  const forzado = $('#controles').classList.contains('forzar');
+  if (enPvp() && forzado) { sfx.click(); elegirReemplazoEnLinea(i); return; }
+  if (!enPvp() && b.pendiente === 'player') {
     sfx.click(); bloquear(true);
     await reproducir(cambioForzado(b, 'player', i));
     mostrarMenu();
-  } else {
-    accionJugador({ tipo: 'cambiar', indice: i });
+    return;
   }
+  accionJugador({ tipo: 'cambiar', indice: i });
 });
 
 document.addEventListener('keydown', (e) => {
@@ -801,96 +1146,118 @@ $('#btnVelocidad').addEventListener('click', (e) => {
   localStorage.setItem('gc:vel', estado.vel);
   e.currentTarget.textContent = `${estado.vel}×`;
   document.documentElement.style.setProperty('--vel', estado.vel);
+  fx.vel = estado.vel;
 });
 
-$('#btnRendirse').addEventListener('click', () => {
+function rendirse(sinPreguntar = false) {
   const b = estado.batalla;
   if (!b || b.terminada) return;
-  if (!confirm('¿Seguro que quieres rendirte? Contará como derrota.')) return;
-  b.terminada = true; b.ganador = 'rival'; b.rendicion = true;
+  if (!sinPreguntar && !confirm('¿Seguro que quieres rendirte? Contará como derrota.')) return;
+  if (enPvp()) estado.sala?.enviar('rendicion');
+  b.terminada = true; b.ganador = otro(estado.miLado); b.motivo = 'rendicion';
   finalizar();
-});
+}
+$('#btnRendirse').addEventListener('click', () => rendirse());
 
 // ---------- Fin de la batalla ----------
 async function finalizar() {
   const b = estado.batalla;
+  if (b.finalizada) return;
+  b.finalizada = true;
   bloquear(true);
-  const gano = b.ganador === 'player';
-  const equipo = b.lados.player.equipo;
+  detenerReloj();
+  const mio = estado.miLado; const suyo = otro(mio);
+  const gano = b.ganador === mio;
+  const equipo = b.lados[mio].equipo;
   const mvp = [...equipo].sort((a, z) => z.kos - a.kos || z.danioHecho - a.danioHecho)[0];
-  const restantes = vivos(b, 'player').length;
+  const restantes = vivos(b, mio).length;
   const kos = equipo.reduce((s, p) => s + p.kos, 0);
-  const g = genActual();
-  $('#lcdTexto').textContent = gano ? `¡Derrotaste a ${estado.rival}!` : b.rendicion ? 'Te rendiste.' : `${estado.rival} ganó la batalla.`;
+  const g = genPorId(b.generacion);
+  const motivo = b.motivo === 'abandono' ? (gano ? `${estado.rival} abandonó la partida.` : 'Abandonaste la partida.')
+    : b.motivo === 'rendicion' ? (gano ? `${estado.rival} se rindió.` : 'Te rendiste.') : '';
+  $('#lcdTexto').textContent = motivo || (gano ? `¡Derrotaste a ${estado.rival}!` : `${estado.rival} ganó la batalla.`);
   (gano ? sfx.victoria : sfx.derrota)();
 
   $('#resultadoContenido').innerHTML = `
     <h2 id="t-res" class="res-titulo ${gano ? 'victoria' : 'derrota'}">${gano ? '¡Victoria!' : 'Derrota'}</h2>
-    <p class="res-sub">${gano ? `Venciste a ${esc(estado.rival)}` : `${esc(estado.rival)} se llevó esta`} en ${etiquetaGen(g)}.</p>
+    <p class="res-sub">${motivo ? `${esc(motivo)} ` : ''}${gano ? `Venciste a ${esc(estado.rival)}` : `${esc(estado.rival)} se llevó esta`} en ${etiquetaGen(g)}${enPvp() ? ' (en línea)' : ''}.</p>
     <div class="res-mvp">
       <img src="${mvp.sprites.frente}" alt="" onerror="this.onerror=null;this.src='${mvp.sprites.frenteFijo}'" />
       <p><small>Tu Pokémon más valioso</small><strong>${esc(mvp.nombre)}</strong><small>${mvp.kos} KO, ${mvp.danioHecho} de daño causado</small></p>
     </div>
     <dl class="res-datos">
       <div><dt>Turnos</dt><dd>${b.turno}</dd></div>
-      <div><dt>Rivales noqueados</dt><dd>${kos}/${b.lados.rival.equipo.length}</dd></div>
+      <div><dt>Rivales noqueados</dt><dd>${kos}/${b.lados[suyo].equipo.length}</dd></div>
       <div><dt>Te quedaron</dt><dd>${restantes}/${equipo.length}</dd></div>
     </dl>
     <p class="res-guardado" id="resGuardado">Guardando resultado…</p>`;
   setTimeout(() => $('#modalResultado').showModal(), 700);
 
   const r = await db.guardarPartida({
-    jugador: estado.nombre,
     rival_nombre: estado.rival,
     generacion: g.id === 0 ? 'Todas' : `Gen ${g.romano} (${g.region})`,
     resultado: gano ? 'victoria' : 'derrota',
     turnos: b.turno,
     restantes,
-    tamano: estado.tamano,
+    tamano: equipo.length,
     mvp_id: mvp.id,
     mvp_nombre: mvp.nombre,
     equipo: equipo.map((p) => p.nombre),
-    rival: b.lados.rival.equipo.map((p) => p.nombre),
+    rival: b.lados[suyo].equipo.map((p) => p.nombre),
+    modo: enPvp() ? 'pvp' : 'cpu',
   }).catch((e) => ({ ok: false, error: e.message }));
   const guardado = $('#resGuardado');
-  if (guardado) guardado.textContent = r.ok ? (r.remoto ? 'Resultado guardado en el ranking global.' : 'Resultado guardado en este navegador (modo local).') : `No se pudo guardar en Supabase: ${r.error}`;
+  if (guardado) guardado.textContent = r.ok ? (r.remoto ? `Resultado guardado en el ranking global a nombre de ${estado.usuario}.` : 'Resultado guardado en este navegador (modo local).') : `No se pudo guardar: ${r.error}`;
+  if (enPvp()) setTimeout(cerrarSala, 3000);
   cargarTablero();
   actualizarRecord();
 }
 
-$('#btnRevancha').addEventListener('click', () => { $('#modalResultado').close(); buscarPartida(); });
-$('#btnMenu').addEventListener('click', () => { $('#modalResultado').close(); mostrar('inicio'); });
+$('#btnRevancha').addEventListener('click', () => {
+  $('#modalResultado').close();
+  if (estado.modoBatalla === 'pvp') { cerrarSala(); buscarPartidaEnLinea(); } else buscarPartida();
+});
+$('#btnMenu').addEventListener('click', () => { $('#modalResultado').close(); cerrarSala(); mostrar('inicio'); });
 
 // ============================================================
 //  ARRANQUE
 // ============================================================
-function arrancar() {
-  $('#inputNombre').value = estado.nombre;
+async function arrancar() {
   $$('input[name=tamano]').forEach((r) => { r.checked = Number(r.value) === estado.tamano; });
-  $('#inputNombre').addEventListener('input', (e) => {
-    estado.nombre = e.target.value.trim();
-    clearTimeout(tRecord); tRecord = setTimeout(actualizarRecord, 500);
-  });
+  $$('input[name=modo]').forEach((r) => { r.checked = r.value === estado.modo; });
   $('#btnVelocidad').textContent = `${estado.vel}×`;
   document.documentElement.style.setProperty('--vel', estado.vel);
   $('#btnSonido').classList.toggle('mute', estaSilenciado());
   $('#btnSonido').addEventListener('click', (e) => { e.currentTarget.classList.toggle('mute', alternarSonido()); sfx.click(); });
-  $$('[data-ir=inicio]').forEach((b) => b.addEventListener('click', () => {
-    if ($('#pantalla-batalla').classList.contains('activa') && estado.batalla && !estado.batalla.terminada && !confirm('Si sales ahora, la batalla no se guardará. ¿Salir?')) return;
+  $$('[data-ir=inicio]').forEach((bt) => bt.addEventListener('click', () => {
+    if (!estado.usuario) { mostrarLogin(); return; }
+    const b = estado.batalla;
+    if ($('#pantalla-batalla').classList.contains('activa') && b && !b.terminada) {
+      if (!confirm('Si sales ahora, la batalla cuenta como derrota. ¿Salir?')) return;
+      rendirse(true);
+      $('#modalResultado').close();
+    }
     estado.busqueda++;
+    estado.cancelarBusqueda?.();
+    cerrarSala();
     mostrar('inicio');
   }));
   renderEstante();
   prepararQR();
-  cargarTablero();
-  actualizarRecord();
   db.escucharPartidas((p) => {
     const ul = $('#recientes');
     ul.querySelector('.vacio')?.remove();
     ul.insertAdjacentHTML('afterbegin', itemReciente(p, true));
     while (ul.children.length > 8) ul.lastElementChild.remove();
-    if (p.jugador !== estado.nombre) toast(`${p.jugador} ${p.resultado === 'victoria' ? 'acaba de ganar' : 'acaba de perder'} en ${p.generacion}.`);
+    if (p.jugador !== estado.usuario && p.resultado === 'victoria') toast(`${p.jugador} acaba de ganar ${p.modo === 'pvp' ? 'un duelo en línea' : 'una batalla'} en ${p.generacion}.`);
     cargarTablero();
   });
+  // ¿Hay sesión guardada?
+  const s = await db.verificarSesion();
+  if (s) entrarAlJuego(s.usuario); else mostrarLogin();
 }
+window.addEventListener('beforeunload', () => {
+  const b = estado.batalla;
+  if (enPvp() && b && !b.terminada) estado.sala?.enviar('rendicion');
+});
 arrancar();

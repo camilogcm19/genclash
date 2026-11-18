@@ -1,11 +1,16 @@
 # GenClash: batallas Pokémon por generación
 
-Aplicación web donde eliges una generación (de Kanto a Paldea, o todas juntas), el juego arma dos equipos aleatorios consumiendo la **PokeAPI** y peleas por turnos contra un rival controlado por la computadora. Cada resultado se guarda en **Supabase** y alimenta un ranking global que se actualiza en tiempo real.
+Aplicación web donde eliges una generación (de Kanto a Paldea, o todas juntas), el juego arma dos equipos aleatorios consumiendo la **PokeAPI** y peleas por turnos **contra la computadora o contra otra persona en línea**. Cada jugador entra con usuario y contraseña, y cada resultado se guarda en **Supabase** y alimenta un ranking global que se actualiza en tiempo real.
+
+Versión publicada: https://camilogcm19.github.io/genclash/
 
 ## Qué hace
 
 - **Consumo de API (PokeAPI):** por partida se hacen entre 60 y 150 consultas a `/generation`, `/pokemon`, `/pokemon-species` y `/move`. Se usan nombres en español, tipos, estadísticas base, movimientos reales, sprites animados y los gritos de cada Pokémon.
 - **Motor de batalla propio:** fórmula oficial de daño, STAB, tabla de 18 tipos, golpes críticos, precisión, prioridad, velocidad, golpes múltiples, absorción y retroceso, cambios de estadísticas (−6 a +6) y estados (quemadura, parálisis, veneno, veneno grave, sueño, congelación y confusión).
+- **Login sin correo:** cuentas con usuario y contraseña, cifrada con bcrypt dentro de Supabase (funciones `registrar`, `iniciar_sesion`, `guardar_partida`). Nadie puede escribir en el ranking a nombre de otro.
+- **Jugador contra jugador en línea:** Supabase Realtime (Presence + Broadcast) empareja a quienes buscan en la misma generación. Los dos navegadores corren el mismo motor con la misma semilla aleatoria y solo intercambian las acciones de cada turno. Incluye temporizador de 60 s por turno, rendición y victoria por abandono.
+- **Animaciones por ataque:** motor de partículas en canvas (`js/fx.js`). Cada movimiento se anima según su tipo (18 paletas) y su forma (rayo, proyectil, golpe, mordida, garras, sismo, caída, drenaje, ondas, polvos, sonido, aura, curación).
 - **Rival con IA:** calcula el daño esperado de cada movimiento, busca noquear, usa movimientos de estado cuando conviene y cambia de Pokémon si está en desventaja.
 - **Niveles balanceados:** como en los combates aleatorios de Showdown, los Pokémon fuertes pelean a menor nivel.
 - **Base de datos (Supabase):** tabla `partidas`, vista `ranking`, políticas RLS y suscripción en tiempo real (cuando alguien termina una batalla, aparece al instante en todas las pantallas abiertas).
@@ -24,7 +29,9 @@ genclash/
 │   ├── api.js            Consumo de la PokeAPI (caché, reintentos, armado de equipos)
 │   ├── battle.js         Motor de batalla (lógica pura)
 │   ├── ai.js             Inteligencia del rival
-│   ├── db.js             Supabase (guardar partidas, ranking, tiempo real)
+│   ├── db.js             Supabase (login, partidas, ranking, tiempo real)
+│   ├── online.js         Emparejamiento y salas en línea (Realtime)
+│   ├── fx.js             Animaciones de ataques (canvas)
 │   ├── data.js           Tabla de tipos, traducciones, generaciones
 │   └── audio.js          Efectos de sonido y gritos
 └── supabase/schema.sql   Script para crear la base de datos

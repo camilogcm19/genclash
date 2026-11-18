@@ -54,15 +54,47 @@ export const vivos = (b, side) => b.lados[side].equipo.filter((p) => p.hp > 0);
 export const opcionesCambio = (b, side) =>
   b.lados[side].equipo.map((p, i) => ({ p, i })).filter(({ p, i }) => p.hp > 0 && i !== b.lados[side].activo).map(({ i }) => i);
 
-/** Nombre para mensajes: "Pikachu" o "el Pikachu rival". */
-export function N(mon, mayus = true) {
-  if (mon.side === 'rival') return `${mayus ? 'El' : 'el'} ${mon.nombre} rival`;
-  return mon.nombre;
-}
+// ------------------------------------------------------------------
+//  Mensajes con perspectiva
+//  El motor escribe "fichas" como ⟦N|player|Pikachu|1⟧ y la interfaz las
+//  convierte según quién mira: "Pikachu" o "El Pikachu rival".
+//  Así el mismo registro sirve para los dos jugadores de una partida en línea.
+// ------------------------------------------------------------------
+const F = (...partes) => `⟦${partes.join('|')}⟧`;
+/** "Pikachu" / "El Pikachu rival" */
+export const N = (mon, mayus = true) => F('N', mon.side, mon.nombre, mayus ? 1 : 0);
 /** "de Pikachu" / "del Pikachu rival" */
-const DE = (mon) => (mon.side === 'rival' ? `del ${mon.nombre} rival` : `de ${mon.nombre}`);
+const DE = (mon) => F('DE', mon.side, mon.nombre);
 /** "a Pikachu" / "al Pikachu rival" */
-const A = (mon) => (mon.side === 'rival' ? `al ${mon.nombre} rival` : `a ${mon.nombre}`);
+const A = (mon) => F('A', mon.side, mon.nombre);
+
+/** Convierte las fichas de un mensaje al punto de vista de `yo` ('player' o 'rival'). */
+export function fmt(texto, yo = 'player') {
+  return String(texto).replace(/⟦([^⟧]+)⟧/g, (_, cuerpo) => {
+    const [tipo, side, nombre, extra] = cuerpo.split('|');
+    const mio = side === yo;
+    switch (tipo) {
+      case 'N': return mio ? nombre : `${extra === '1' ? 'El' : 'el'} ${nombre} rival`;
+      case 'DE': return mio ? `de ${nombre}` : `del ${nombre} rival`;
+      case 'A': return mio ? `a ${nombre}` : `al ${nombre} rival`;
+      case 'VUELVE': return mio ? `¡${nombre}, vuelve!` : `${extra} retiró a ${nombre}.`;
+      case 'ENVIA': return mio ? `¡Adelante, ${nombre}!` : `¡${extra} envió a ${nombre}!`;
+      default: return nombre ?? '';
+    }
+  });
+}
+
+/** Generador aleatorio con semilla (mulberry32): los dos jugadores obtienen los mismos números. */
+export function rngConSemilla(semilla) {
+  let a = semilla >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 export function velocidad(mon) {
   let v = mon.stats.speed * multEtapa(mon.boosts.speed);
@@ -177,7 +209,7 @@ function cambiar(b, side, indice, ev, forzado) {
   const lado = b.lados[side];
   const saliente = activo(b, side);
   if (!forzado && saliente.hp > 0) {
-    ev.push({ t: 'msg', texto: side === 'player' ? `¡${saliente.nombre}, vuelve!` : `${b.lados.rival.nombre} retiró a ${saliente.nombre}.` });
+    ev.push({ t: 'msg', texto: F('VUELVE', side, saliente.nombre, lado.nombre) });
     ev.push({ t: 'retirar', side });
   }
   // Al salir se reinician los cambios de stats y estados volátiles
@@ -189,7 +221,7 @@ function cambiar(b, side, indice, ev, forzado) {
   lado.ultimoCambio = b.turno;
   const entra = activo(b, side);
   entra.vecesUsado += 1;
-  ev.push({ t: 'msg', texto: side === 'player' ? `¡Adelante, ${entra.nombre}!` : `¡${b.lados.rival.nombre} envió a ${entra.nombre}!` });
+  ev.push({ t: 'msg', texto: F('ENVIA', side, entra.nombre, lado.nombre) });
   ev.push({ t: 'entrar', side, indice, mon: entra, hp: entra.hp, maxHp: entra.maxHp, estado: entra.status });
 }
 
@@ -338,7 +370,7 @@ function movimientoDanino(b, att, def, move, ev) {
   if (move.statChanges?.length) {
     const prob = meta.statChance || 100;
     if (b.rng() * 100 < prob) {
-      const objetivo = meta.category === 'damage-raise' ? att : def;
+      const objetivo = (meta.category === 'damage-raise' || meta.category === 'damage+raise') ? att : def;
       if (objetivo.hp > 0) for (const s of move.statChanges) cambiarStat(objetivo, s.stat, s.change, ev);
     }
   }
