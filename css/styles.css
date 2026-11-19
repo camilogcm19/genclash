@@ -668,7 +668,7 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
 .cambio .ct { display: flex; gap: 2px; justify-content: center; flex-wrap: wrap; }
 .cambio .ct i { font-style: normal; font-size: .56rem; font-weight: 700; padding: 0 4px; border-radius: 4px; background: var(--c); color: #fff; line-height: 1.5; text-shadow: 0 1px 0 rgba(0, 0, 0, .35); }
 
-.clima-chip { position: absolute; z-index: 6; left: 50%; top: 4%; transform: translateX(-50%); font-family: var(--pixel); font-size: .85rem;
+.clima-chip { position: absolute; z-index: 6; right: 3%; top: 13%; font-family: var(--pixel); font-size: .85rem;
   background: rgba(15, 18, 48, .72); color: #fff; padding: 2px 12px; border-radius: 20px; pointer-events: none; }
 .arena::after { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 4; opacity: 0; transition: opacity .8s; }
 .arena[data-clima="rain"]::after { opacity: 1; background: linear-gradient(180deg, rgba(40, 70, 140, .28), rgba(20, 40, 90, .18)),
@@ -684,6 +684,7 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
 .slot.con-pantalla::before { content: ''; position: absolute; left: 50%; bottom: 0; width: 120%; height: 115%; transform: translateX(-50%); border-radius: 50% 50% 12px 12px;
   background: linear-gradient(180deg, rgba(160, 220, 255, .22), rgba(120, 190, 255, .08)); border: 2px solid rgba(190, 235, 255, .55); box-shadow: inset 0 0 18px rgba(170, 230, 255, .35); pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .arena::after { animation: none !important; } }
+@media (max-width: 720px) { .clima-chip { top: 3%; right: 2%; font-size: .72rem; padding: 1px 8px; } }
 
 /* ---------------- v4: Modo personalizado ---------------- */
 .equipo-modo { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; }
