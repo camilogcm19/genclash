@@ -5,8 +5,8 @@
 //  - Batalla animada, ranking y QR
 // ============================================================
 import { GENERACIONES, TODAS, LEGENDARIOS, TIPOS, ESTADOS, STATS_ES, STATS_CORTO, CATEGORIAS, NOMBRES_RIVALES, TITULOS_RIVALES, efectividad } from './data.js';
-import { armarEquipo, sprites, aleatorio, contadorPeticiones } from './api.js';
-import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCambio, otro, FORCEJEO, fmt, rngConSemilla } from './battle.js';
+import { armarEquipo, sprites, aleatorio, contadorPeticiones, cargarPokemon, cargarMovimiento, listaEspecies, movimientosDe, elegirMovimientos, nivelPara, calcularStats, armarEquipoPersonalizado } from './api.js';
+import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCambio, otro, FORCEJEO, RECARGA, fmt, rngConSemilla, rangoDanio, rangoVelocidad, accionForzada, poderNominal, multEtapa, CLIMA_ES, campoDe } from './battle.js';
 import { decidirAccion, mejorReemplazo } from './ai.js';
 import * as db from './db.js';
 import { sfx, grito, alternarSonido, modoSonido, iniciarMusica, detenerMusica } from './audio.js';
@@ -26,6 +26,8 @@ const estado = {
   gen: Number(localStorage.getItem('gc:gen') ?? 1),
   tamano: Number(localStorage.getItem('gc:tamano') || 6),
   modo: localStorage.getItem('gc:modo') || 'cpu',
+  equipoModo: localStorage.getItem('gc:equipoModo') || 'azar', // 'azar' | 'mio'
+  miEquipo: [],
   vel: Number(localStorage.getItem('gc:vel') || 1),
   batalla: null,
   miLado: 'player',      // en línea, el invitado juega del lado 'rival' del motor
@@ -83,8 +85,20 @@ const haceCuanto = (iso) => {
   return `hace ${Math.round(s / 86400)} d`;
 };
 
+/** Tema musical de la batalla: épico si hay legendarios, si no, el de combate. */
+function temaBatalla() {
+  const b = estado.batalla;
+  if (!b) return 'batalla';
+  const hayLegendario = ['player', 'rival'].some((s) => b.lados[s].equipo.some((m) => m.legendario));
+  return b.generacion === LEGENDARIOS.id || hayLegendario ? 'legendaria' : 'batalla';
+}
+function musicaDe(p) {
+  if (modoSonido() !== 'todo') return;
+  if (p === 'batalla') { if (estado.batalla && !estado.batalla.terminada) iniciarMusica(temaBatalla()); } else iniciarMusica('menu');
+}
+
 function mostrar(p) {
-  if (p !== 'batalla') detenerMusica();
+  if (p !== 'batalla') musicaDe(p);
   $$('.pantalla').forEach((x) => x.classList.toggle('activa', x.id === `pantalla-${p}`));
   window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
 }
@@ -147,6 +161,7 @@ function entrarAlJuego(usuario) {
   mostrar('inicio');
   cargarTablero();
   actualizarRecord();
+  db.cargarEquipo().then((e) => { estado.miEquipo = e; resumenEquipo(); }).catch(() => {});
   estado.desconectarPresencia();
   estado.desconectarPresencia = conectarPresencia(usuario, (n) => {
     $('#enLineaTxt').textContent = n > 1 ? `${n} entrenadores en línea` : 'Contra otra persona';
@@ -205,7 +220,9 @@ function elegirGen(id) {
 function actualizarCTA() {
   const g = genActual();
   const donde = g.id === 0 ? 'con todas las generaciones' : g.id === LEGENDARIOS.id ? 'solo con legendarios' : `en ${g.region}`;
-  $('#txtBuscar').textContent = estado.modo === 'pvp' ? `Buscar rival en línea ${donde}` : `Buscar partida ${donde}`;
+  const conMio = estado.equipoModo === 'mio' && estado.miEquipo.some((x) => x?.id);
+  if (conMio) $('#txtBuscar').textContent = estado.modo === 'pvp' ? 'Buscar rival en línea con mi equipo' : `Jugar con mi equipo contra un rival ${donde}`;
+  else $('#txtBuscar').textContent = estado.modo === 'pvp' ? `Buscar rival en línea ${donde}` : `Buscar partida ${donde}`;
 }
 
 $$('input[name=modo]').forEach((r) => r.addEventListener('change', () => {
@@ -324,6 +341,7 @@ $('#formJugar').addEventListener('submit', (e) => {
   if (!estado.usuario) { mostrarLogin(); return; }
   estado.tamano = Number(new FormData(e.target).get('tamano')) || 6;
   localStorage.setItem('gc:tamano', estado.tamano);
+  if (!equipoListoParaJugar()) return;
   if (estado.modo === 'pvp') buscarPartidaEnLinea(); else buscarPartida();
 });
 
@@ -358,7 +376,8 @@ async function armarDosEquipos(g, tam, id) {
       $('#desfile').append(img);
     }
   };
-  return Promise.all([armarEquipo(g.id, tam, progreso('a')), armarEquipo(g.id, tam, progreso('b'))]);
+  const mio = armarMiEquipo(g, tam, progreso('a'));
+  return Promise.all([mio, armarEquipo(g.id, tam, progreso('b'))]);
 }
 
 async function buscarPartida() {
@@ -446,33 +465,66 @@ async function buscarPartidaEnLinea() {
   $('#busquedaTitulo').textContent = `¡Rival encontrado: ${estado.rival}!`;
   configurarSala(sala);
 
+  // Cada entrenador arma SU equipo (aleatorio o personalizado); el anfitrión junta los dos y arranca.
+  $('#busquedaDetalle').textContent = 'Preparando tu equipo…';
+  let miEq;
+  try {
+    miEq = (await armarUnEquipo(g, tam, id)).map(quitarPesado);
+  } catch (e) {
+    sala.enviar('error', { mensaje: 'Tu rival no pudo cargar sus Pokémon.' });
+    toast(e.message, 6000); cerrarSala(); mostrar('inicio'); return;
+  }
+  if (id !== estado.busqueda || sala.cerrada) return;
+
   if (sala.soyHost) {
-    try {
-      const [eqA, eqB] = await armarDosEquipos(g, tam, id);
-      if (id !== estado.busqueda || sala.cerrada) return;
-      const datos = {
+    $('#busquedaDetalle').textContent = `Esperando el equipo de ${estado.rival}…`;
+    let datos = null; let pedir = null; let limite = null;
+    const empezar = (equipoRival) => {
+      if (datos || id !== estado.busqueda || sala.cerrada) return;
+      datos = {
         semilla: Math.floor(Math.random() * 2 ** 31), gen: g.id, tamano: tam,
         host: estado.usuario, invitado: estado.rival,
-        equipos: { player: eqA.map(quitarPesado), rival: eqB.map(quitarPesado) },
+        equipos: { player: miEq, rival: equipoRival.slice(0, tam) },
       };
-      sala.on('hola', () => sala.enviar('inicio', datos)); // por si el primer mensaje se perdió
-      await sala.enviar('inicio', datos);
+      clearInterval(pedir); clearTimeout(limite);
+      sala.enviar('inicio', datos);
       prepararBatallaEnLinea(datos, 'player');
-    } catch (e) {
-      sala.enviar('error', { mensaje: 'Tu rival no pudo cargar los Pokémon.' });
-      toast(e.message, 6000); cerrarSala(); mostrar('inicio');
-    }
+    };
+    sala.on('equipo', ({ equipo }) => { if (Array.isArray(equipo) && equipo.length) empezar(equipo); });
+    sala.on('hola', () => { if (datos) sala.enviar('inicio', datos); else sala.enviar('pideEquipo'); }); // por si un mensaje se perdió
+    if (!datos) { pedir = setInterval(() => { if (!datos) sala.enviar('pideEquipo'); }, 2000); sala.enviar('pideEquipo'); }
+    if (!datos) limite = setTimeout(() => {
+      clearInterval(pedir);
+      if (!datos && id === estado.busqueda) { toast(`${estado.rival} tardó demasiado en preparar su equipo.`); cerrarSala(); mostrar('inicio'); }
+    }, 60000);
   } else {
-    $('#busquedaDetalle').textContent = `${estado.rival} está preparando los equipos…`;
+    $('#busquedaDetalle').textContent = `Enviando tu equipo a ${estado.rival}…`;
+    let ultimoEnvio = 0;
+    const mandar = () => { if (Date.now() - ultimoEnvio < 1500) return; ultimoEnvio = Date.now(); sala.enviar('equipo', { equipo: miEq }); };
+    sala.on('pideEquipo', mandar);
+    mandar();
     const limite = setTimeout(() => {
       if (id === estado.busqueda && estado.batalla?.sala !== sala.id) { toast('El rival tardó demasiado. Busca otra vez.'); cerrarSala(); mostrar('inicio'); }
-    }, 45000);
+    }, 60000);
     sala.on('inicio', (datos) => {
       clearTimeout(limite);
       if (id !== estado.busqueda || estado.batalla?.sala === sala.id) return;
       prepararBatallaEnLinea(datos, 'rival');
     });
   }
+}
+
+/** Arma solo mi equipo con barra de progreso (para el modo en línea). */
+async function armarUnEquipo(g, tam, id) {
+  const barra = $('#barraProgreso');
+  let n = 0;
+  return armarMiEquipo(g, tam, ({ ultimo }) => {
+    if (id !== estado.busqueda) return;
+    n++;
+    barra.firstElementChild.style.width = `${(n / tam) * 100}%`;
+    $('#busquedaDetalle').textContent = `Preparando tu equipo: ${n} de ${tam}`;
+    if (ultimo) { const img = new Image(64, 64); img.src = ultimo.sprites.frenteFijo; img.alt = ''; $('#desfile').append(img); }
+  });
 }
 
 function prepararBatallaEnLinea(datos, lado) {
@@ -601,7 +653,7 @@ function abrirInfo(p, verMovs) {
   const movs = verMovs ? p.moves.map((m) => `
       <div style="--c:${TIPOS[m.type]?.color}">
         <strong>${esc(m.nombre)}</strong>
-        <small>${TIPOS[m.type]?.es}, ${CATEGORIAS[m.category]?.es}${m.power ? `, potencia ${m.power}` : ''}${m.accuracy ? `, precisión ${m.accuracy}%` : ''}, ${m.pp} PP</small>
+        <small>${TIPOS[m.type]?.es}, ${CATEGORIAS[m.category]?.es}${poderNominal(m) ? `, potencia ${poderNominal(m)}` : ''}${m.accuracy ? `, precisión ${m.accuracy}%` : ', no falla'}, ${m.pp} PP</small>
         ${m.desc ? `<small>${esc(m.desc)}</small>` : ''}
       </div>`).join('') : '<div style="--c:#555"><strong>Movimientos ocultos</strong><small>Los descubrirás durante la batalla.</small></div>';
   $('#infoContenido').innerHTML = `
@@ -612,6 +664,7 @@ function abrirInfo(p, verMovs) {
         <p class="cat">${esc(p.categoria)}${p.legendario ? ' (legendario)' : ''}</p>
         <div class="tipos">${p.types.map(badgeTipo).join('')}</div>
         <p class="cat">Nivel ${p.level}, ${p.altura} m, ${p.peso} kg</p>
+        <p class="cat">${verMovs ? `Velocidad ${p.stats.speed}` : `Velocidad posible ${rangoVelocidad({ base: p.base, level: p.level, boosts: {} }).join('–')}`}</p>
       </div>
     </div>
     ${p.descripcion ? `<p class="info-desc">${esc(p.descripcion)}</p>` : ''}
@@ -642,7 +695,8 @@ function iniciarBatalla() {
   estado.mostrado = { player: null, rival: null };
   $('#log').innerHTML = '';
   $('#turnoChip').textContent = 'Turno 1';
-  for (const s of ['player', 'rival']) { spriteDe(s).className = 'sprite'; hpbox[s].classList.remove('visible'); }
+  for (const s of ['player', 'rival']) { spriteDe(s).className = 'sprite'; hpbox[s].classList.remove('visible'); slot[s].classList.remove('con-pantalla'); }
+  pintarClima(null);
   $('#btnRevancha').textContent = enPvp() ? 'Buscar otro rival' : 'Revancha';
   mostrar('batalla');
   ajustarEscala();
@@ -670,7 +724,7 @@ function introVS(P, R) {
   el.hidden = false;
   el.classList.remove('sale'); void el.offsetWidth; el.classList.add('entra');
   sfx.inicioBatalla();
-  iniciarMusica();
+  musicaDe('batalla');
   return new Promise((ok) => {
     setTimeout(() => { el.classList.add('sale'); }, reducido ? 300 : 1700);
     setTimeout(() => { el.hidden = true; el.classList.remove('entra', 'sale'); ok(); }, reducido ? 500 : 2150);
@@ -734,13 +788,18 @@ function renderHp(side) {
   const est = m.estado ? `<span class="est" style="background:${ESTADOS[m.estado].color}">${ESTADOS[m.estado].corto}</span>` : '';
   const boosts = Object.entries(m.boosts || {}).filter(([, v]) => v).map(([k, v]) => {
     const mult = v > 0 ? (2 + v) / 2 : 2 / (2 - v);
+    if (k === 'accuracy' || k === 'evasion') return `<span class="boost ${v < 0 ? 'neg' : ''}">${k === 'accuracy' ? 'Prec' : 'Evas'} ${v > 0 ? '+' : ''}${v}</span>`;
     return `<span class="boost ${v < 0 ? 'neg' : ''}">${STATS_CORTO[k]} ×${mult.toFixed(mult % 1 ? 2 : 0).replace(/0$/, '')}</span>`;
   }).join('');
   const equipo = estado.batalla.lados[motor(side)].equipo;
+  const vb = m.boosts?.speed ?? 0; const para = m.estado === 'paralysis' ? 0.5 : 1;
+  const vel = side === 'player'
+    ? `<span class="vel" title="Velocidad real de tu Pokémon (con cambios y estado)">Vel <b>${Math.floor(mon.stats.speed * multEtapa(vb) * para)}</b></span>`
+    : (() => { const [a, z] = rangoVelocidad({ ...mon, boosts: { speed: vb }, status: m.estado }); return `<span class="vel" title="Velocidad posible del rival: depende de su naturaleza y entrenamiento">Vel <b>${a}–${z}</b></span>`; })();
   const puntos = equipo.map((_, i) => `<img src="${BALL}" alt="" class="${estado.caidos[side].has(i) ? 'caido' : ''}" />`).join('');
   hpbox[side].innerHTML = `
     <div class="hp-top"><span class="nombre">${esc(mon.nombre)}</span><span class="nivel">Nv. ${mon.level}</span></div>
-    <div class="tipos">${mon.types.map(badgeTipo).join('')}</div>
+    <div class="tipos">${mon.types.map(badgeTipo).join('')}${vel}</div>
     <div class="hp-fila"><b>PS</b><div class="barra-hp"><div class="rastro" style="width:${pct}%"></div><div class="relleno ${nivel}" style="width:${pct}%"></div></div></div>
     <div class="hp-info">${est}<span class="boosts">${boosts}</span><span class="hp-num">${side === 'player' ? `${Math.round(hpVis)}/${m.maxHp}` : `${pct}%`}</span></div>
     <div class="equipo-puntos" aria-label="Pokémon restantes">${puntos}</div>`;
@@ -849,7 +908,7 @@ async function animAtaque(side, move) {
     await fx.cargar(move.type, centro(side), contacto ? 0.25 : 0.42);
   }
   // 2) Lanzamiento
-  sfx.ataque(move.type, move.power);
+  sfx.ataque(move);
   const dist = contacto ? 30 : 8;
   const embestida = anim(img, [
     { transform: `translate(0,0)${espejo}` },
@@ -896,6 +955,21 @@ async function animDanio(e) {
   await espera(180);
 }
 
+function pintarClima(c) {
+  arena.dataset.clima = c || '';
+  let el = $('#climaChip');
+  if (!el) { el = document.createElement('div'); el.id = 'climaChip'; el.className = 'clima-chip'; arena.append(el); }
+  el.hidden = !c;
+  if (c) { el.textContent = `${CLIMA_ES[c].icono} ${CLIMA_ES[c].nombre}`; sfx.clima?.(c); }
+}
+function pintarPantallas() {
+  const b = estado.batalla;
+  for (const lado of ['player', 'rival']) {
+    const p = b.lados[motor(lado)].pantallas;
+    slot[lado].classList.toggle('con-pantalla', Object.values(p).some((v) => v > 0));
+  }
+}
+
 async function animCurar(e) {
   estado.mostrado[e.side].hp = e.hp;
   fx.animar({ name: 'recover', type: 'grass', category: 'status', target: 'user', meta: { category: 'heal' } }, centro(e.side), centro(e.side));
@@ -905,6 +979,60 @@ async function animCurar(e) {
   await animarPS(e.side, e.hp, 800);
 }
 
+/** Punto de lanzamiento: el entrenador está fuera de cuadro, en la esquina de su lado. */
+function origenLanzamiento(side) {
+  const a = arena.getBoundingClientRect();
+  return side === 'player' ? { x: -30, y: a.height * 0.95 } : { x: a.width + 30, y: a.height * 0.05 };
+}
+
+/** Lanza la Poké Ball en arco, rebota, se abre con un destello y el Pokémon se materializa. */
+async function lanzarBall(side, destino) {
+  const o = origenLanzamiento(side);
+  const ball = particula('ball-vuelo', o.x, o.y);
+  ball.innerHTML = `<img src="${BALL}" alt="" />`;
+  const dx = destino.x - o.x; const dy = destino.y - o.y;
+  const alto = Math.min(arena.clientHeight * 0.55, 230);
+  const vueltas = side === 'player' ? 720 : -720;
+  const pasos = [];
+  for (let k = 0; k <= 10; k++) {
+    const t = k / 10;
+    const x = dx * t; const y = dy * t - alto * 4 * t * (1 - t);
+    pasos.push({ transform: `translate(${x}px, ${y}px) rotate(${vueltas * t}deg) scale(${0.7 + 0.5 * t})`, offset: t });
+  }
+  sfx.lanzar();
+  // estela de destellos mientras vuela
+  let estela = null;
+  if (!reducido) {
+    let n = 0;
+    estela = setInterval(() => {
+      const r = ball.getBoundingClientRect(); const a = arena.getBoundingClientRect();
+      const ch = particula('chispa-ball', r.left - a.left + r.width / 2, r.top - a.top + r.height / 2);
+      anim(ch, [{ transform: 'translate(-50%,-50%) scale(1)', opacity: 0.9 }, { transform: 'translate(-50%,-50%) scale(0)', opacity: 0 }], { duration: 380 }).then(() => ch.remove());
+      if (++n > 30) clearInterval(estela);
+    }, 28);
+  }
+  await anim(ball, pasos, { duration: 620, easing: 'linear' });
+  clearInterval(estela);
+  ball.style.transform = `translate(${dx}px, ${dy}px) scale(1.2)`;
+  // rebote y tambaleo
+  sfx.rebote();
+  await anim(ball, [
+    { transform: `translate(${dx}px, ${dy}px) scale(1.2)` },
+    { transform: `translate(${dx}px, ${dy - 26}px) scale(1.2) rotate(${side === 'player' ? 20 : -20}deg)`, offset: 0.4 },
+    { transform: `translate(${dx}px, ${dy}px) scale(1.25, 1.1)`, offset: 0.75 },
+    { transform: `translate(${dx}px, ${dy}px) scale(1.2) rotate(-12deg)`, offset: 0.88 },
+    { transform: `translate(${dx}px, ${dy}px) scale(1.2)` },
+  ], { duration: 360, easing: 'ease-out' });
+  // se abre: destello blanco, anillo y luz
+  sfx.abrir();
+  ball.classList.add('abierta');
+  const luz = particula('luz-ball', destino.x, destino.y);
+  anim(luz, [{ transform: 'translate(-50%,-50%) scale(.1)', opacity: 1 }, { transform: 'translate(-50%,-50%) scale(2.4)', opacity: 0 }], { duration: 520, easing: 'ease-out' }).then(() => luz.remove());
+  fx.destelloBall?.(destino);
+  anim(ball, [{ opacity: 1, transform: `translate(${dx}px, ${dy}px) scale(1.2)` }, { opacity: 0, transform: `translate(${dx}px, ${dy + 10}px) scale(.4)` }], { duration: 300 }).then(() => ball.remove());
+  if (reducido) setTimeout(() => { ball.remove(); luz.remove(); }, 400);
+}
+
 async function animEntrar(e) {
   const side = e.side;
   estado.mostrado[side] = { mon: e.mon, hp: e.hp, hpVis: e.hp, maxHp: e.maxHp, estado: e.estado, boosts: {} };
@@ -912,35 +1040,46 @@ async function animEntrar(e) {
   img.classList.remove('visible');
   await cargarSprite(side, e.mon);
   renderHp(side);
-  hpbox[side].classList.add('visible');
-  // la Poké Ball cae y se abre
   const c = centro(side);
-  const ball = particula('', c.x, c.y);
-  ball.style.cssText += 'position:absolute;width:32px;height:32px;margin:-16px 0 0 -16px;';
-  ball.innerHTML = `<img src="${BALL}" alt="" style="width:32px;image-rendering:pixelated" />`;
-  sfx.entrar();
-  await anim(ball, [{ transform: 'translateY(-90px) rotate(-200deg)', opacity: 0 }, { transform: 'translateY(0) rotate(0)', opacity: 1 }], { duration: 320, easing: 'cubic-bezier(.3,1.6,.6,1)' });
-  ball.remove();
-  fx.golpecito('normal', c);
+  await lanzarBall(side, { x: c.x, y: c.y + c.h * 0.28 });
   img.classList.add('visible');
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   grito(e.mon.grito);
-  fx.cargar('normal', c, 0.2);
-  await anim(img, [{ transform: `scale(0)${espejo}`, filter: 'brightness(4)' }, { transform: `scale(1.08)${espejo}`, filter: 'brightness(2)', offset: 0.7 }, { transform: `scale(1)${espejo}`, filter: 'brightness(1)' }], { duration: 450 });
-  await espera(250);
+  hpbox[side].classList.add('visible');
+  await anim(img, [
+    { transform: `translateY(25%) scale(0.05, 0.05)${espejo}`, filter: 'brightness(0) invert(1) drop-shadow(0 0 18px #fff)', opacity: 0.9 },
+    { transform: `translateY(4%) scale(0.9, 1.15)${espejo}`, filter: 'brightness(0) invert(1) drop-shadow(0 0 14px #fff)', opacity: 1, offset: 0.45 },
+    { transform: `scale(1.08, .94)${espejo}`, filter: 'brightness(2.2)', offset: 0.72 },
+    { transform: `scale(1)${espejo}`, filter: 'brightness(1)' },
+  ], { duration: 560, easing: 'cubic-bezier(.2,.9,.3,1.2)' });
+  await espera(220);
 }
 
+/** Rayo rojo de regreso a la Poké Ball. */
 async function animRetirar(side) {
   const img = spriteDe(side);
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
+  const c = centro(side); const o = origenLanzamiento(side);
+  const rayo = particula('rayo-retorno', c.x, c.y);
+  const largo = Math.hypot(o.x - c.x, o.y - c.y);
+  rayo.style.width = `${largo}px`;
+  rayo.style.transform = `rotate(${Math.atan2(o.y - c.y, o.x - c.x)}rad)`;
   sfx.retirar();
-  await anim(img, [{ transform: `scale(1)${espejo}`, filter: 'none' }, { transform: `scale(0)${espejo}`, filter: 'brightness(.6) sepia(1) hue-rotate(-50deg) saturate(6)' }], { duration: 380, easing: 'ease-in' });
+  anim(rayo, [{ opacity: 0, clipPath: 'inset(0 100% 0 0)' }, { opacity: 1, clipPath: 'inset(0 0 0 0)', offset: 0.35 }, { opacity: 1, clipPath: 'inset(0 0 0 0)', offset: 0.7 }, { opacity: 0, clipPath: 'inset(0 0 0 100%)' }], { duration: 620 }).then(() => rayo.remove());
+  await anim(img, [
+    { transform: `scale(1)${espejo}`, filter: 'none' },
+    { transform: `scale(1.05)${espejo}`, filter: 'brightness(.7) sepia(1) hue-rotate(-50deg) saturate(8) drop-shadow(0 0 12px #ff3b3b)', offset: 0.35 },
+    { transform: `translateY(20%) scale(0)${espejo}`, filter: 'brightness(.7) sepia(1) hue-rotate(-50deg) saturate(8)' },
+  ], { duration: 520, easing: 'ease-in' });
+  if (reducido) rayo.remove();
   img.classList.remove('visible');
   hpbox[side].classList.remove('visible');
+  await espera(120);
 }
 
 async function animDebil(side) {
   const img = spriteDe(side);
+  img.classList.remove('escondido');
   const m = estado.mostrado[side];
   m.hp = 0; m.hpVis = 0; m.estado = null;
   hpbox[side].classList.remove('critico');
@@ -974,6 +1113,27 @@ async function animStat(e) {
 }
 
 async function animMini(e) {
+  const c = centro(e.side);
+  if (e.tipo === 'carga') {
+    const img = spriteDe(e.side);
+    sfx.carga(e.move.type);
+    await fx.cargar(e.move.type, c, 0.6);
+    if (e.inv) {
+      const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
+      const fin = e.inv === 'aire' ? 'translateY(-140%) scale(.6)' : e.inv === 'sombra' ? 'scale(1.1)' : 'translateY(80%) scaleY(.2)';
+      sfx.retirar();
+      await anim(img, [{ transform: `none${espejo}`, opacity: 1 }, { transform: `${fin}${espejo}`, opacity: 0 }], { duration: 420, easing: 'ease-in' });
+      img.classList.add('escondido');
+    }
+    return;
+  }
+  if (e.tipo === 'reaparecer') { const img = spriteDe(e.side); img.classList.remove('escondido'); await anim(img, [{ opacity: 0 }, { opacity: 1 }], { duration: 250 }); return; }
+  if (e.tipo === 'recarga') { flotante(e.side, '…', 'baja'); await espera(300); return; }
+  if (e.tipo === 'proteccion') { sfx.escudo(); fx.escudo?.(c); await espera(450); return; }
+  if (e.tipo === 'semilla') { fx.animar({ name: 'leech-seed', type: 'grass', category: 'status', target: 'selected-pokemon', meta: { category: 'unique' } }, centro(e.side === 'player' ? 'rival' : 'player'), c); await espera(500); return; }
+  if (e.tipo === 'rocas') { fx.golpecito('rock', c); await espera(250); return; }
+  if (e.tipo === 'futuro') { await fx.animar({ ...e.move, category: 'special' }, centro(e.side), centro(e.side === 'player' ? 'rival' : 'player')); return; }
+  if (e.tipo === 'aura') { fx.estado('electric', c); await espera(300); return; }
   if (e.tipo === 'dormir') flotante(e.side, 'Z z z', 'baja');
   if (e.tipo === 'paralisis') fx.estado('electric', centro(e.side));
   if (e.tipo === 'confuso') flotante(e.side, '? ? ?', 'crit');
@@ -1016,9 +1176,17 @@ async function reproducir(eventosMotor) {
         const sig = eventos[i + 1];
         if (sig?.t === 'msg') { decir(sig.texto, sig.cls); i++; }
         await espera(380);
+        const img = spriteDe(e.side);
+        if (img.classList.contains('escondido')) {
+          img.classList.remove('escondido');
+          const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
+          anim(img, [{ opacity: 0, transform: `translateY(-60%)${espejo}` }, { opacity: 1, transform: `none${espejo}` }], { duration: 260 });
+        }
         await animAtaque(e.side, e.move);
         break;
       }
+      case 'clima': pintarClima(e.clima); break;
+      case 'pantalla': pintarPantallas(); break;
       case 'danio': await animDanio(e); break;
       case 'curar': await animCurar(e); break;
       case 'estado':
@@ -1064,6 +1232,25 @@ function detenerReloj() {
   const el = $('#reloj'); if (el) el.textContent = '';
 }
 
+function botonMovimiento(m, n, yo, foe, b) {
+  const c = TIPOS[m.type]?.color || '#888';
+  const ef = m.category === 'status' ? null : m.type === 'typeless' ? 1 : efectividad(m.type, foe.types);
+  const efTxt = ef == null ? '' : ef === 0 ? '<span class="ef x0">Sin efecto</span>' : ef > 1 ? `<span class="ef x2">×${ef}</span>` : ef < 1 ? `<span class="ef xm">×${ef}</span>` : '';
+  const pot = poderNominal(m);
+  let danio = '';
+  if (m.category !== 'status' && m !== RECARGA) {
+    const r = rangoDanio(yo, foe, m, b);
+    if (r?.variable) danio = '<span class="dmg var">daño variable</span>';
+    else if (r && r.eff !== 0) danio = `<span class="dmg ${r.ko ? 'ko' : r.posibleKo ? 'quiza' : ''}">${r.pctMin === r.pctMax ? `${r.pctMax}%` : `${r.pctMin}–${r.pctMax}%`}${r.ko ? ' · KO' : r.posibleKo ? ' · ¿KO?' : ''}</span>`;
+  }
+  const titulo = `${m.nombre}: ${TIPOS[m.type]?.es}, ${CATEGORIAS[m.category]?.es}${pot ? `, potencia ${pot}` : ''}${m.accuracy ? `, precisión ${m.accuracy}%` : ', no falla'}${m.priority ? `, prioridad ${m.priority > 0 ? '+' : ''}${m.priority}` : ''}. ${m.desc || ''}`;
+  return `<button class="mov" data-mov="${m.idx}" style="--c:${c};--t:${colorTexto(c)}" ${m.ppLeft <= 0 ? 'disabled' : ''} title="${esc(titulo)}">
+    <span class="mn">${esc(m.nombre)}</span>
+    <span class="md"><span>${TIPOS[m.type]?.es}</span><span>${CATEGORIAS[m.category]?.icono} ${CATEGORIAS[m.category]?.es}</span>${pot ? `<span>Pot. ${pot}</span>` : ''}<span>${m.accuracy ? `${m.accuracy}%` : '—'}</span><span class="kbd">[${n + 1}]</span></span>
+    <span class="pp">${m.idx < 0 ? '' : `${m.ppLeft}/${m.pp}`}</span>${efTxt}${danio}
+  </button>`;
+}
+
 function mostrarMenu() {
   const b = estado.batalla;
   if (!b || b.terminada) return;
@@ -1074,25 +1261,23 @@ function mostrarMenu() {
   $('.cambios-titulo').classList.remove('forzado');
   $('#cambiosTitulo').textContent = 'Cambiar de Pokémon';
 
+  const forzada = accionForzada(b, estado.miLado);
   const sinPP = !yo.moves.some((m) => m.ppLeft > 0);
-  const lista = sinPP ? [{ ...FORCEJEO, ppLeft: 1, idx: -1 }] : yo.moves.map((m, i) => ({ ...m, idx: i }));
-  $('#movs').innerHTML = lista.map((m, n) => {
-    const c = TIPOS[m.type]?.color || '#888';
-    const ef = m.category === 'status' || !m.power ? null : m.type === 'typeless' ? 1 : efectividad(m.type, foe.types);
-    const efTxt = ef == null ? '' : ef === 0 ? '<span class="ef x0">Sin efecto</span>' : ef > 1 ? `<span class="ef x2">×${ef}</span>` : ef < 1 ? `<span class="ef xm">×${ef}</span>` : '';
-    const titulo = `${m.nombre}: ${TIPOS[m.type]?.es}, ${CATEGORIAS[m.category]?.es}${m.power ? `, potencia ${m.power}` : ''}${m.accuracy ? `, precisión ${m.accuracy}%` : ''}. ${m.desc || ''}`;
-    return `<button class="mov" data-mov="${m.idx}" style="--c:${c};--t:${colorTexto(c)}" ${m.ppLeft <= 0 ? 'disabled' : ''} title="${esc(titulo)}">
-      <span class="mn">${esc(m.nombre)}</span>
-      <span class="md"><span>${TIPOS[m.type]?.es}</span><span>${CATEGORIAS[m.category]?.icono} ${CATEGORIAS[m.category]?.es}</span>${m.power ? `<span>Pot. ${m.power}</span>` : ''}<span class="kbd">[${n + 1}]</span></span>
-      <span class="pp">${m.idx === -1 ? '' : `${m.ppLeft}/${m.pp}`}</span>${efTxt}
-    </button>`;
-  }).join('');
+  let lista;
+  if (forzada) {
+    const mv = forzada.indice === -2 ? { ...RECARGA, nombre: 'Recuperarse', desc: 'Debe descansar tras el ataque anterior.' } : yo.moves[forzada.indice];
+    lista = [{ ...mv, idx: forzada.indice }];
+    $('#lcdTexto').textContent = forzada.motivo === 'recarga' ? `${yo.nombre} necesita recuperarse este turno.` : forzada.motivo === 'carga' ? `${yo.nombre} va a liberar ${mv.nombre}.` : `${yo.nombre} sigue atacando sin control.`;
+  } else lista = sinPP ? [{ ...FORCEJEO, ppLeft: 1, idx: -1 }] : yo.moves.map((m, i) => ({ ...m, idx: i }));
+  $('#movs').innerHTML = lista.map((m, n) => botonMovimiento(m, n, yo, foe, b)).join('');
+  $('#movs').classList.toggle('uno', lista.length === 1);
   renderCambios(false);
+  if (forzada) $$('#cambios .cambio').forEach((x) => { x.disabled = true; });
   bloquear(false);
   if (enPvp()) {
     estado.pvp.fase = 'menu';
     reloj(60, () => {
-      const usable = yo.moves.findIndex((m) => m.ppLeft > 0);
+      const usable = forzada ? forzada.indice : yo.moves.findIndex((m) => m.ppLeft > 0);
       accionJugador({ tipo: 'mover', indice: usable });
     });
   }
@@ -1106,9 +1291,10 @@ function renderCambios(forzado) {
     const act = i === lado.activo && p.hp > 0;
     const dis = p.hp <= 0 || act;
     return `<button class="cambio ${act ? 'activo' : ''} ${p.hp <= 0 ? 'caido' : ''}" data-cambio="${i}" ${dis ? 'disabled' : ''}
-      title="${esc(`${p.nombre} (${p.hp}/${p.maxHp} PS)${p.status ? ', ' + ESTADOS[p.status].es : ''}. ${p.moves.map((m) => m.nombre).join(', ')}`)}">
+      title="${esc(`${p.nombre} · ${p.types.map((t) => TIPOS[t]?.es).join('/')} (${p.hp}/${p.maxHp} PS, Vel ${p.stats.speed})${p.status ? ', ' + ESTADOS[p.status].es : ''}. ${p.moves.map((m) => m.nombre).join(', ')}`)}">
       <img src="${p.sprites.icono}" alt="" onerror="this.onerror=null;this.src='${p.sprites.frenteFijo}'" />
       <span class="cn">${esc(p.nombre)}</span>
+      <span class="ct">${p.types.map((t) => `<i style="--c:${TIPOS[t]?.color}" title="${TIPOS[t]?.es}">${TIPOS[t]?.es}</i>`).join('')}</span>
       <span class="mini"><div class="${pct > 50 ? '' : pct > 20 ? 'media' : 'baja'}" style="width:${pct}%"></div></span>
     </button>`;
   }).join('');
@@ -1155,7 +1341,8 @@ async function despuesDelTurno() {
   if (enPvp()) {
     const necesitan = ['player', 'rival'].filter((s) => activo(b, s).hp <= 0);
     if (!necesitan.length) { mostrarMenu(); return; }
-    const clave = `r${b.turno}`;
+    const caidos = ['player', 'rival'].reduce((n, s) => n + b.lados[s].equipo.filter((m) => m.hp <= 0).length, 0);
+    const clave = `r${b.turno}.${caidos}`;
     estado.pvp.fase = 'reemplazo';
     estado.pvp.claveReemplazo = clave;
     const elegidos = (estado.pvp.reemplazos[clave] ||= {});
@@ -1170,9 +1357,11 @@ async function despuesDelTurno() {
     return;
   }
 
-  if (activo(b, 'rival').hp <= 0) {
+  let vueltas = 0;
+  while (!b.terminada && activo(b, 'rival').hp <= 0 && vueltas++ < 6) {
     await reproducir(cambioForzado(b, 'rival', mejorReemplazo(b, 'rival')));
   }
+  if (b.terminada) return finalizar();
   if (b.pendiente === 'player') { pedirReemplazo(); return; }
   mostrarMenu();
 }
@@ -1210,7 +1399,7 @@ async function intentarReemplazos() {
   const ev = [];
   for (const s of necesitan) ev.push(...cambioForzado(b, s, elegidos[s]));
   await reproducir(ev);
-  mostrarMenu();
+  despuesDelTurno();
 }
 
 $('#movs').addEventListener('click', (e) => {
@@ -1228,7 +1417,7 @@ $('#cambios').addEventListener('click', async (e) => {
   if (!enPvp() && b.pendiente === 'player') {
     sfx.click(); bloquear(true);
     await reproducir(cambioForzado(b, 'player', i));
-    mostrarMenu();
+    despuesDelTurno();
     return;
   }
   accionJugador({ tipo: 'cambiar', indice: i });
@@ -1321,11 +1510,251 @@ $('#btnRevancha').addEventListener('click', () => {
 $('#btnMenu').addEventListener('click', () => { $('#modalResultado').close(); cerrarSala(); mostrar('inicio'); });
 
 // ============================================================
+//  MI EQUIPO (modo personalizado)
+// ============================================================
+const ed = { especies: null, slot: 0, movs: [], cargaId: 0, mon: null };
+const equipoValidos = () => estado.miEquipo.filter((x) => x && x.id && x.moves?.length);
+const normalizar = (t) => String(t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+const nombreClave = (k) => k.split('-').map((p) => p[0]?.toUpperCase() + p.slice(1)).join(' ');
+
+function resumenEquipo() {
+  const n = equipoValidos().length;
+  actualizarCTA();
+  $('#miEquipoTxt').textContent = n ? `${n} Pokémon listo${n === 1 ? '' : 's'}` : 'Tú eliges Pokémon y ataques';
+}
+
+async function abrirEditor() {
+  sfx.confirmar();
+  mostrar('equipo');
+  while (estado.miEquipo.length < 6) estado.miEquipo.push(null);
+  const sel = $('#eqTipoMov');
+  if (sel.options.length < 3) sel.insertAdjacentHTML('beforeend', Object.entries(TIPOS).map(([k, v]) => `<option value="${k}">${v.es}</option>`).join(''));
+  await renderSlots();
+  const vacio = estado.miEquipo.findIndex((x) => !x);
+  seleccionarSlot(vacio === -1 ? 0 : vacio);
+  ed.especies ||= await listaEspecies();
+}
+
+async function renderSlots() {
+  const html = await Promise.all(estado.miEquipo.map(async (x, i) => {
+    const clase = `eq-slot${i === ed.slot ? ' activo' : ''}${i >= 3 ? ' reserva' : ''}`;
+    if (!x) return `<li class="${clase}"><button type="button" data-slot="${i}"><span class="vacio">Agregar</span></button></li>`;
+    const mon = await cargarPokemon(x.id).catch(() => null);
+    if (!mon) return `<li class="${clase}"><button type="button" data-slot="${i}"><span class="vacio">#${x.id}</span></button></li>`;
+    const movs = await Promise.all(x.moves.map((n) => cargarMovimiento(n).catch(() => null)));
+    const chips = movs.filter(Boolean).map((m) => `<span style="--c:${TIPOS[m.type]?.color}">${esc(m.nombre)}</span>`).join('');
+    return `<li class="${clase}"><button type="button" data-slot="${i}" aria-label="${esc(mon.nombre)}, lugar ${i + 1}">
+      <img src="${mon.sprites.frenteFijo}" alt="" loading="lazy" />
+      <span class="n">${esc(mon.nombre)}</span>
+      <span class="tipos">${mon.types.map(badgeTipo).join('')}</span>
+      <span class="mvs">${chips || '<span class="falta">Sin movimientos</span>'}</span>
+    </button></li>`;
+  }));
+  $('#eqSlots').innerHTML = html.join('');
+}
+
+function seleccionarSlot(i) {
+  ed.slot = i;
+  $$('#eqSlots .eq-slot').forEach((li, k) => li.classList.toggle('activo', k === i));
+  $('#eqEditor').hidden = false;
+  $('#eqNumSlot').textContent = i + 1;
+  $('#eqBuscar').value = '';
+  $('#eqSug').innerHTML = '';
+  const x = estado.miEquipo[i];
+  if (x?.id) cargarFicha(x.id, false);
+  else { ed.mon = null; ed.movs = []; $('#eqFicha').innerHTML = ''; $('#eqLista').innerHTML = ''; $('#eqCarga').textContent = 'Primero elige un Pokémon.'; pintarElegidos(); $('#eqBuscar').focus(); }
+}
+
+function sugerencias(q) {
+  const lista = ed.especies || [];
+  const n = normalizar(q);
+  if (!n) return [];
+  const num = Number(q.trim().replace('#', ''));
+  const res = [];
+  if (num >= 1 && num <= 1025) { const e = lista.find((x) => x.id === num); if (e) res.push(e); }
+  for (const e of lista) {
+    if (res.length >= 24) break;
+    if (e.id === num) continue;
+    if (normalizar(e.clave).includes(n)) res.push(e);
+  }
+  return res.sort((a, b) => (normalizar(b.clave).startsWith(n) - normalizar(a.clave).startsWith(n)) || a.id - b.id);
+}
+
+function pintarSugerencias() {
+  const res = sugerencias($('#eqBuscar').value);
+  $('#eqSug').innerHTML = res.map((e) => `<li><button type="button" data-especie="${e.id}">
+    <img src="${sprites(e.id).icono}" alt="" loading="lazy" onerror="this.style.visibility='hidden'" />
+    <span>${esc(nombreClave(e.clave))}</span><span class="num">#${e.id}</span></button></li>`).join('');
+}
+
+async function cargarFicha(id, nuevo) {
+  const mio = ++ed.cargaId;
+  $('#eqFicha').innerHTML = '<p class="eq-carga">Cargando Pokémon…</p>';
+  $('#eqLista').innerHTML = '';
+  let mon;
+  try { mon = await cargarPokemon(id); } catch { $('#eqFicha').innerHTML = '<p class="eq-carga">No se pudo cargar. Revisa tu conexión.</p>'; return; }
+  if (mio !== ed.cargaId) return;
+  ed.mon = mon;
+  const nivel = nivelPara(mon.total);
+  const st = calcularStats(mon.base, nivel);
+  const [vMin, vMax] = rangoVelocidad({ base: mon.base, level: nivel, boosts: {} });
+  const maxBase = 200;
+  $('#eqFicha').innerHTML = `
+    <img class="arte" src="${mon.sprites.arte}" alt="${esc(mon.nombre)}" />
+    <div><h4>${esc(mon.nombre)} <small class="cat">#${mon.id}${mon.categoria ? ` · ${esc(mon.categoria)}` : ''}</small></h4>
+    <div class="tipos">${mon.types.map(badgeTipo).join('')}</div></div>
+    <div class="bases">${Object.entries(mon.base).map(([k, v]) => `<span>${STATS_ES[k]}</span><b>${v}</b><i style="width:${Math.min(100, (v / maxBase) * 100)}%;--c:${v >= 110 ? '#52d273' : v >= 70 ? '#ffcf33' : '#ff8a5c'}"></i>`).join('')}</div>
+    <p class="extra">Peleará a nivel ${nivel}. PS ${st.hp} · Velocidad ${st.speed} (otros entrenadores la verán como ${vMin}–${vMax}).</p>
+    <button type="button" class="btn-texto" id="eqQuitar">Quitar del equipo</button>`;
+  if (nuevo) {
+    estado.miEquipo[ed.slot] = { id, moves: [] };
+    grito(mon.grito, { volumen: 0.25 });
+  }
+  $('#eqCarga').textContent = `Cargando movimientos (0 de ${mon.movimientos.length})…`;
+  ed.movs = [];
+  pintarElegidos();
+  const lista = await movimientosDe(mon, ({ hechos, total, lista: parcial }) => {
+    if (mio !== ed.cargaId) return;
+    $('#eqCarga').textContent = hechos < total ? `Cargando movimientos (${hechos} de ${total})…` : '';
+    ed.movs = parcial; pintarListaMovs();
+  });
+  if (mio !== ed.cargaId) return;
+  ed.movs = lista;
+  const x = estado.miEquipo[ed.slot];
+  if (x && !x.moves.length) { // propone 4 movimientos competitivos para empezar
+    const sugeridos = await elegirMovimientos(mon);
+    x.moves = sugeridos.map((m) => m.name).filter((n) => lista.some((m) => m.name === n)).slice(0, 4);
+    renderSlots();
+  }
+  $('#eqCarga').textContent = `${lista.length} movimientos disponibles.`;
+  pintarElegidos(); pintarListaMovs();
+}
+
+function pintarElegidos() {
+  const x = estado.miEquipo[ed.slot];
+  const elegidos = (x?.moves || []).map((n) => ed.movs.find((m) => m.name === n)).filter(Boolean);
+  $('#eqCuenta').textContent = `${elegidos.length}/4`;
+  const huecos = Array.from({ length: 4 - elegidos.length }, () => '<span class="hueco">Libre</span>');
+  $('#eqElegidos').innerHTML = elegidos.map((m) => {
+    const c = TIPOS[m.type]?.color || '#888';
+    const pot = poderNominal(m);
+    return `<button type="button" data-quitar="${m.name}" style="--c:${c};--t:${colorTexto(c)}" title="Quitar ${esc(m.nombre)}"><b>${esc(m.nombre)}</b>${TIPOS[m.type]?.es} · ${pot ? `Pot. ${pot}` : CATEGORIAS[m.category].es}</button>`;
+  }).join('') + huecos.join('');
+}
+
+function pintarListaMovs() {
+  const x = estado.miEquipo[ed.slot];
+  const q = normalizar($('#eqFiltroMov').value);
+  const tipo = $('#eqTipoMov').value; const cat = $('#eqCatMov').value;
+  const mon = ed.mon;
+  const filtrados = ed.movs.filter((m) => (!q || normalizar(m.nombre).includes(q) || normalizar(m.name).includes(q)) && (!tipo || m.type === tipo) && (!cat || m.category === cat));
+  const valor = (m) => (m.category === 'status' ? -1 : (typeof poderNominal(m) === 'number' ? poderNominal(m) : 70) * (mon?.types.includes(m.type) ? 1.5 : 1));
+  filtrados.sort((a, b) => valor(b) - valor(a) || a.nombre.localeCompare(b.nombre));
+  $('#eqLista').innerHTML = filtrados.map((m) => {
+    const sel = x?.moves.includes(m.name);
+    const pot = poderNominal(m);
+    const stab = mon?.types.includes(m.type) && m.category !== 'status';
+    return `<button type="button" class="eq-mov" role="option" aria-selected="${sel}" data-mov-ed="${m.name}" style="--c:${TIPOS[m.type]?.color}" title="${esc(m.desc || '')}">
+      <span class="mn">${sel ? '<span class="ok">✓</span> ' : ''}${esc(m.nombre)}${stab ? ' <span class="stab">STAB</span>' : ''}<small>${esc(m.desc || '')}</small></span>
+      <span class="tipo" style="--c:${TIPOS[m.type]?.color}">${TIPOS[m.type]?.es}</span>
+      <span class="cat-c">${CATEGORIAS[m.category]?.icono} ${CATEGORIAS[m.category]?.es}</span>
+      <span class="num">${pot ?? '—'}<small>Potencia</small></span>
+      <span class="num">${m.accuracy ?? '—'}<small>Precisión</small></span>
+      <span class="num pp-c">${m.pp}<small>PP</small></span>
+    </button>`;
+  }).join('') || (ed.mon ? '<p class="eq-carga">Ningún movimiento coincide con el filtro.</p>' : '');
+}
+
+function alternarMovimiento(nombre) {
+  const x = estado.miEquipo[ed.slot];
+  if (!x) return;
+  const i = x.moves.indexOf(nombre);
+  if (i >= 0) { x.moves.splice(i, 1); sfx.cancelar(); } else if (x.moves.length >= 4) { toast('Ya tiene 4 movimientos. Quita uno de arriba para cambiarlo.', 2600); sfx.fallo(); return; } else { x.moves.push(nombre); sfx.seleccion(); }
+  pintarElegidos(); pintarListaMovs(); renderSlots();
+}
+
+$('#btnEditarEquipo').addEventListener('click', abrirEditor);
+$('#eqSlots').addEventListener('click', (e) => { const b = e.target.closest('[data-slot]'); if (b) { sfx.click(); seleccionarSlot(Number(b.dataset.slot)); renderSlots(); } });
+$('#eqBuscar').addEventListener('input', pintarSugerencias);
+$('#eqBuscar').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#eqSug button')?.click(); } });
+$('#eqSug').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-especie]'); if (!b) return;
+  const id = Number(b.dataset.especie);
+  if (estado.miEquipo.some((x, k) => x?.id === id && k !== ed.slot)) { toast('Ese Pokémon ya está en tu equipo.', 2400); return; }
+  sfx.confirmar();
+  $('#eqSug').innerHTML = ''; $('#eqBuscar').value = '';
+  cargarFicha(id, true).then(renderSlots);
+});
+$('#eqFicha').addEventListener('click', (e) => {
+  if (e.target.id !== 'eqQuitar') return;
+  estado.miEquipo[ed.slot] = null; sfx.cancelar();
+  renderSlots(); seleccionarSlot(ed.slot);
+});
+$('#eqLista').addEventListener('click', (e) => { const b = e.target.closest('[data-mov-ed]'); if (b) alternarMovimiento(b.dataset.movEd); });
+$('#eqElegidos').addEventListener('click', (e) => { const b = e.target.closest('[data-quitar]'); if (b) alternarMovimiento(b.dataset.quitar); });
+['eqFiltroMov', 'eqTipoMov', 'eqCatMov'].forEach((id) => $(`#${id}`).addEventListener('input', pintarListaMovs));
+$('#eqMovAzar').addEventListener('click', async () => {
+  const x = estado.miEquipo[ed.slot]; if (!x || !ed.mon) return;
+  const m = await elegirMovimientos({ ...ed.mon, movimientos: ed.movs.map((k) => k.name) });
+  x.moves = m.map((k) => k.name).slice(0, 4); sfx.confirmar();
+  pintarElegidos(); pintarListaMovs(); renderSlots();
+});
+$('#eqAzar').addEventListener('click', async () => {
+  const faltan = estado.miEquipo.map((x, i) => (x ? -1 : i)).filter((i) => i >= 0);
+  if (!faltan.length) { toast('El equipo ya está completo.', 2000); return; }
+  $('#eqAzar').disabled = true; $('#eqCarga').textContent = 'Eligiendo Pokémon al azar…';
+  try {
+    const excluir = new Set(estado.miEquipo.filter(Boolean).map((x) => x.id));
+    const nuevos = await armarEquipo(genActual().id, faltan.length, () => {}, excluir);
+    nuevos.forEach((b, k) => { estado.miEquipo[faltan[k]] = { id: b.id, moves: b.moves.map((m) => m.name) }; });
+    sfx.confirmar();
+  } catch (e) { toast(e.message, 4000); }
+  $('#eqAzar').disabled = false;
+  await renderSlots(); seleccionarSlot(ed.slot);
+});
+$('#eqVaciar').addEventListener('click', () => {
+  if (!confirm('¿Quitar todos los Pokémon del equipo?')) return;
+  estado.miEquipo = Array(6).fill(null); renderSlots(); seleccionarSlot(0);
+});
+$('#eqListo').addEventListener('click', async () => {
+  const limpio = estado.miEquipo.filter((x) => x?.id);
+  for (const x of limpio) if (!x.moves.length) { toast('Cada Pokémon necesita al menos un movimiento.', 3000); return; }
+  const r = await db.guardarEquipo(limpio);
+  estado.miEquipo = limpio;
+  resumenEquipo();
+  toast(r.ok ? (r.remoto ? 'Equipo guardado en tu cuenta.' : 'Equipo guardado en este navegador.') : `Se guardó aquí, pero no en la nube: ${r.error}`, 2800);
+  if (limpio.length) { estado.equipoModo = 'mio'; localStorage.setItem('gc:equipoModo', 'mio'); $$('input[name=equipo]').forEach((r2) => { r2.checked = r2.value === 'mio'; }); }
+  sfx.confirmar();
+  mostrar('inicio');
+});
+$$('input[name=equipo]').forEach((r) => r.addEventListener('change', () => {
+  estado.equipoModo = r.value; localStorage.setItem('gc:equipoModo', r.value); sfx.click(); actualizarCTA();
+  if (r.value === 'mio' && !equipoValidos().length) abrirEditor();
+}));
+
+/** Mi equipo para esta partida: el personalizado (si lo elegí) o uno al azar de la generación. */
+function usarMiEquipo() { return estado.equipoModo === 'mio' && equipoValidos().length >= estado.tamano; }
+function armarMiEquipo(g, tam, progreso) {
+  if (usarMiEquipo()) return armarEquipoPersonalizado(equipoValidos().slice(0, tam), progreso);
+  return armarEquipo(g.id, tam, progreso);
+}
+/** Revisa antes de buscar partida que el equipo personalizado alcance. */
+function equipoListoParaJugar() {
+  if (estado.equipoModo !== 'mio') return true;
+  const n = equipoValidos().length;
+  if (n >= estado.tamano) return true;
+  toast(`Tu equipo tiene ${n} Pokémon y para ${estado.tamano} vs ${estado.tamano} necesitas ${estado.tamano}. Complétalo o juega 3 vs 3.`, 5000);
+  abrirEditor();
+  return false;
+}
+
+// ============================================================
 //  ARRANQUE
 // ============================================================
 async function arrancar() {
   $$('input[name=tamano]').forEach((r) => { r.checked = Number(r.value) === estado.tamano; });
   $$('input[name=modo]').forEach((r) => { r.checked = r.value === estado.modo; });
+  $$('input[name=equipo]').forEach((r) => { r.checked = r.value === estado.equipoModo; });
   $('#btnVelocidad').textContent = `${estado.vel}×`;
   document.documentElement.style.setProperty('--vel', estado.vel);
   const pintarSonido = () => {
@@ -1339,7 +1768,7 @@ async function arrancar() {
   $('#btnSonido').addEventListener('click', () => {
     const m = alternarSonido(); pintarSonido(); sfx.click();
     toast(m === 'todo' ? 'Música y efectos activados' : m === 'efectos' ? 'Música apagada, efectos activos' : 'Sonido apagado', 1800);
-    if (m === 'todo' && $('#pantalla-batalla').classList.contains('activa') && estado.batalla && !estado.batalla.terminada) iniciarMusica();
+    if (m === 'todo') musicaDe($('#pantalla-batalla').classList.contains('activa') ? 'batalla' : 'inicio');
   });
   // Sonidos de interfaz: pasar el cursor y tocar botones
   let ultimoHover = 0;

@@ -5,11 +5,12 @@
 //  - Arma equipos aleatorios por generación con movimientos reales
 // ============================================================
 import { GENERACIONES, TODAS, LEGENDARIOS, MOVIMIENTOS_EXCLUIDOS, ESTADO_PERMITIDOS } from './data.js';
+import { estadoSoportado } from './battle.js';
 
 export const API = 'https://pokeapi.co/api/v2';
 const RAW = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites';
 const CRIES = 'https://raw.githubusercontent.com/PokeAPI/cries/main/cries/pokemon';
-const VERSION_CACHE = 'gc3';
+const VERSION_CACHE = 'gc4';
 
 const memoria = new Map();
 let peticionesHechas = 0;
@@ -171,7 +172,17 @@ const PLACAJE = {
   meta: { category: 'damage', ailment: 'none', ailmentChance: 0, drain: 0, healing: 0, critRate: 0, flinchChance: 0, minHits: null, maxHits: null, statChance: 0 },
 };
 
-const esDaninoUtil = (m) => m.category !== 'status' && m.power >= 35 && !['ohko', 'unique', 'force-switch', 'field-effect', 'whole-field-effect'].includes(m.meta?.category);
+/** Movimientos sin potencia fija que igual pegan fuerte (los demás sin potencia se descartan en sets aleatorios). */
+const VARIABLES_BUENOS = new Set(['seismic-toss', 'night-shade', 'super-fang', 'low-kick', 'grass-knot', 'heavy-slam', 'heat-crash',
+  'gyro-ball', 'electro-ball', 'return', 'frustration', 'reversal', 'flail', 'crush-grip', 'wring-out', 'hard-press', 'stored-power', 'ruination']);
+const RANDOM_EVITAR = new Set(['counter', 'mirror-coat', 'metal-burst', 'comeuppance', 'endeavor', 'final-gambit', 'focus-punch',
+  'dream-eater', 'synchronoise', 'self-destruct', 'explosion', 'misty-explosion', 'fake-out', 'first-impression', 'future-sight',
+  'doom-desire', 'present', 'psywave', 'magnitude', 'sonic-boom', 'dragon-rage', 'last-resort', 'skull-bash', 'razor-wind']);
+const esDaninoUtil = (m) => m.category !== 'status' && !RANDOM_EVITAR.has(m.name)
+  && (m.power >= 35 || VARIABLES_BUENOS.has(m.name)) && !['ohko', 'force-switch', 'field-effect', 'whole-field-effect'].includes(m.meta?.category);
+/** Potencia aproximada para puntuar movimientos al armar sets. */
+const poderAprox = (m) => m.power || ({ 'seismic-toss': 85, 'night-shade': 85, 'super-fang': 75, 'return': 102, frustration: 102, 'crush-grip': 90, 'wring-out': 90, 'hard-press': 75, 'stored-power': 40, reversal: 60, flail: 60 }[m.name] ?? 70);
+const PENALIZA = { 'hyper-beam': 0.75, 'giga-impact': 0.75, 'blast-burn': 0.75, 'hydro-cannon': 0.75, 'frenzy-plant': 0.75, 'rock-wrecker': 0.75, 'roar-of-time': 0.75, 'prismatic-laser': 0.75, 'eternabeam': 0.75, 'meteor-assault': 0.75, 'solar-beam': 0.6, 'solar-blade': 0.6, 'sky-attack': 0.6, 'meteor-beam': 0.8, 'electro-shot': 0.8, 'freeze-shock': 0.6, 'ice-burn': 0.6, fly: 0.7, bounce: 0.7, dig: 0.7, dive: 0.7, 'phantom-force': 0.75, 'shadow-force': 0.75, 'steel-beam': 0.7, 'mind-blown': 0.7 };
 
 /** Elige 4 movimientos competitivos: STAB, cobertura de tipos y, a veces, uno de estado. */
 export async function elegirMovimientos(mon, rng = Math.random) {
@@ -192,7 +203,7 @@ export async function elegirMovimientos(mon, rng = Math.random) {
     const hits = m.meta?.maxHits ? ((m.meta.minHits ?? 1) + m.meta.maxHits) / 2 : 1;
     const lado = (m.category === 'physical' ? atk : spa) / Math.max(atk, spa);
     const retroceso = m.meta?.drain < 0 ? 0.9 : 1;
-    return Math.min(m.power, 130) * hits * ((m.accuracy ?? 100) / 100) * (mon.types.includes(m.type) ? 1.5 : 1) * lado ** 1.5 * retroceso * (0.85 + rng() * 0.3);
+    return Math.min(poderAprox(m), 130) * (PENALIZA[m.name] ?? 1) * hits * ((m.accuracy ?? 100) / 100) * (mon.types.includes(m.type) ? 1.5 : 1) * lado ** 1.5 * retroceso * (0.85 + rng() * 0.3);
   };
   const orden = [...new Map(candidatos.map((m) => [m.name, m])).values()].sort((a, b) => score(b) - score(a));
 
@@ -271,4 +282,51 @@ export async function armarEquipo(genId, tamano, progreso = () => {}, excluir = 
   }
   if (equipo.length === 0) throw new Error('No se pudo conectar con la PokeAPI. Revisa tu conexión a internet.');
   return equipo;
+}
+
+
+// ------------------------------------------------------------
+//  Modo personalizado
+// ------------------------------------------------------------
+/** Lista de las 1025 especies {id, clave} para el buscador del editor de equipo. */
+export async function listaEspecies() {
+  const k = 'especies';
+  const c = leerCache(k);
+  if (c) return c;
+  try {
+    const j = await obtenerJSON(`${API}/pokemon-species?limit=1025`);
+    const lista = j.results.map((r) => ({ id: idDeUrl(r.url), clave: r.name })).filter((x) => x.id <= 1025).sort((a, b) => a.id - b.id);
+    guardarCache(k, lista);
+    return lista;
+  } catch {
+    return Array.from({ length: 1025 }, (_, i) => ({ id: i + 1, clave: `#${i + 1}` }));
+  }
+}
+
+/** Movimientos que puede aprender un Pokémon, con datos completos (se cargan por lotes). */
+export async function movimientosDe(mon, alAvanzar = () => {}) {
+  const nombres = mon.movimientos;
+  const lista = [];
+  for (let i = 0; i < nombres.length; i += 12) {
+    const lote = await Promise.all(nombres.slice(i, i + 12).map((n) => cargarMovimiento(n).catch(() => null)));
+    lista.push(...lote.filter(Boolean).filter(estadoSoportado));
+    alAvanzar({ hechos: Math.min(nombres.length, i + 12), total: nombres.length, lista });
+  }
+  return lista;
+}
+
+/** Arma los "builds" de batalla a partir de un equipo guardado [{id, moves:[nombres]}]. */
+export async function armarEquipoPersonalizado(guardado, progreso = () => {}) {
+  let hechos = 0;
+  const res = await Promise.all(guardado.map(async (slot) => {
+    const mon = await cargarPokemon(slot.id);
+    let moves = (await Promise.all((slot.moves || []).map((n) => cargarMovimiento(n).catch(() => null)))).filter(Boolean);
+    if (!moves.length) moves = await elegirMovimientos(mon);
+    const nivel = nivelPara(mon.total);
+    const build = { ...mon, level: nivel, stats: calcularStats(mon.base, nivel), moves };
+    hechos++;
+    progreso({ hechos, total: guardado.length, ultimo: build });
+    return build;
+  }));
+  return res;
 }

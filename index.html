@@ -92,6 +92,12 @@
           <label><input type="radio" name="tamano" value="3" /><span>3 vs 3</span></label>
           <label><input type="radio" name="tamano" value="6" checked /><span>6 vs 6</span></label>
         </fieldset>
+        <fieldset class="campo equipo-modo">
+          <legend>Tu equipo</legend>
+          <label><input type="radio" name="equipo" value="azar" checked /><span><b>Aleatorio</b><small>De la generación elegida</small></span></label>
+          <label><input type="radio" name="equipo" value="mio" /><span><b>Personalizado</b><small id="miEquipoTxt">Tú eliges Pokémon y ataques</small></span></label>
+          <button type="button" class="btn-editar" id="btnEditarEquipo">Editar mi equipo</button>
+        </fieldset>
         <p class="record" id="record" aria-live="polite"></p>
       </form>
 
@@ -121,6 +127,48 @@
             <p>Escanéalo y juega desde tu celular.</p>
           </div>
         </section>
+      </div>
+    </section>
+
+    <!-- ======================= MI EQUIPO ======================= -->
+    <section class="pantalla" id="pantalla-equipo" aria-labelledby="t-equipo">
+      <div class="eq">
+        <header class="eq-cab">
+          <div>
+            <h2 id="t-equipo">Mi equipo</h2>
+            <p class="eq-sub">Elige hasta 6 Pokémon y 4 movimientos para cada uno. En 3 vs 3 pelean los tres primeros.</p>
+          </div>
+          <div class="eq-acciones">
+            <button type="button" class="btn-texto" id="eqAzar">Rellenar al azar</button>
+            <button type="button" class="btn-texto" id="eqVaciar">Vaciar</button>
+            <button type="button" class="btn-primario" id="eqListo">Guardar y volver</button>
+          </div>
+        </header>
+        <ol class="eq-slots" id="eqSlots" aria-label="Pokémon del equipo"></ol>
+        <div class="eq-editor" id="eqEditor" hidden>
+          <div class="eq-izq">
+            <label class="eq-label" for="eqBuscar">Pokémon del lugar <span id="eqNumSlot">1</span></label>
+            <div class="eq-buscador">
+              <input id="eqBuscar" type="search" placeholder="Escribe un nombre o número: pikachu, 445…" autocomplete="off" spellcheck="false" />
+              <ul class="eq-sug" id="eqSug" role="listbox" aria-label="Resultados"></ul>
+            </div>
+            <div class="eq-ficha" id="eqFicha"></div>
+          </div>
+          <div class="eq-der">
+            <div class="eq-movs-cab">
+              <h3>Movimientos <span class="eq-cuenta" id="eqCuenta">0/4</span></h3>
+              <button type="button" class="btn-texto" id="eqMovAzar">Elegir por mí</button>
+            </div>
+            <div class="eq-elegidos" id="eqElegidos" aria-live="polite"></div>
+            <div class="eq-filtros">
+              <input id="eqFiltroMov" type="search" placeholder="Filtrar por nombre" autocomplete="off" />
+              <select id="eqTipoMov" aria-label="Filtrar por tipo"><option value="">Todos los tipos</option></select>
+              <select id="eqCatMov" aria-label="Filtrar por categoría"><option value="">Todas</option><option value="physical">Física</option><option value="special">Especial</option><option value="status">Estado</option></select>
+            </div>
+            <p class="eq-carga" id="eqCarga"></p>
+            <div class="eq-lista" id="eqLista" role="listbox" aria-multiselectable="true" aria-label="Movimientos que puede aprender"></div>
+          </div>
+        </div>
       </div>
     </section>
 

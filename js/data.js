@@ -108,23 +108,13 @@ export const CATEGORIAS = {
   status:   { es: 'Estado',   icono: '◎' },
 };
 
-/** Movimientos que el motor simplificado no modela bien (carga, recarga, condicionales…). */
+/** Los pocos movimientos que el motor no puede representar (dependen de objetos, de aliados o de cambiar a mitad del ataque). */
 export const MOVIMIENTOS_EXCLUIDOS = new Set([
-  'hyper-beam', 'giga-impact', 'blast-burn', 'hydro-cannon', 'frenzy-plant', 'rock-wrecker', 'roar-of-time',
-  'prismatic-laser', 'eternabeam', 'meteor-assault', 'solar-beam', 'solar-blade', 'sky-attack', 'skull-bash',
-  'razor-wind', 'fly', 'dig', 'dive', 'bounce', 'phantom-force', 'shadow-force', 'sky-drop', 'freeze-shock',
-  'ice-burn', 'geomancy', 'meteor-beam', 'electro-shot', 'focus-punch', 'dream-eater', 'self-destruct',
-  'explosion', 'misty-explosion', 'memento', 'final-gambit', 'last-resort', 'belch', 'snore', 'sleep-talk',
-  'fling', 'natural-gift', 'synchronoise', 'future-sight', 'doom-desire', 'uproar', 'outrage', 'thrash',
-  'petal-dance', 'rollout', 'ice-ball', 'bide', 'fake-out', 'first-impression', 'mat-block', 'steel-beam',
-  'mind-blown', 'shell-trap', 'beak-blast', 'sucker-punch', 'thunderclap', 'upper-hand', 'burn-up',
-  'double-shock', 'dragon-energy', 'water-spout', 'eruption', 'endeavor', 'pain-split', 'counter',
-  'mirror-coat', 'metal-burst', 'u-turn', 'volt-switch', 'flip-turn', 'parting-shot', 'baton-pass',
-  'teleport', 'struggle', 'spit-up', 'stockpile', 'swallow', 'round', 'echoed-voice', 'fury-cutter',
-  'rage', 'rage-fist', 'last-respects', 'pursuit', 'brine', 'hex', 'venoshock', 'retaliate', 'stomping-tantrum',
-  'expanding-force', 'rising-voltage', 'terrain-pulse', 'weather-ball', 'judgment', 'multi-attack',
-  'techno-blast', 'revelation-dance', 'aura-wheel', 'tera-blast', 'ivy-cudgel', 'raging-bull', 'hyperspace-fury',
-  'hyperspace-hole', 'steel-roller', 'ice-spinner', 'clangorous-soul', 'shed-tail', 'chilly-reception',
+  'snore', 'sleep-talk', 'belch', 'fling', 'natural-gift', 'spit-up', 'stockpile', 'swallow', 'bide', 'struggle',
+  'baton-pass', 'teleport', 'shed-tail', 'sky-drop', 'geomancy', 'upper-hand', 'mat-block', 'steel-roller',
+  'clangorous-soul', 'ally-switch', 'after-you', 'helping-hand', 'follow-me', 'rage-powder', 'spotlight',
+  'instruct', 'quash', 'transform', 'mimic', 'sketch', 'metronome', 'copycat', 'mirror-move', 'assist',
+  'me-first', 'nature-power', 'celebrate', 'hold-hands', 'happy-hour', 'splash', 'max-guard',
 ]);
 
 /** Movimientos de estado que sí se permiten (el motor los modela). */
@@ -137,6 +127,9 @@ export const ESTADO_PERMITIDOS = new Set([
   'stun-spore', 'glare', 'sing', 'lovely-kiss', 'dark-void', 'poison-powder', 'confuse-ray',
   'sweet-kiss', 'supersonic', 'growl', 'screech', 'charm', 'scary-face', 'leer', 'tail-whip', 'metal-sound',
   'fake-tears', 'feather-dance', 'tickle', 'string-shot', 'cotton-spore', 'eerie-impulse', 'swagger',
+  'protect', 'detect', 'stealth-rock', 'spikes', 'toxic-spikes', 'leech-seed', 'reflect', 'light-screen',
+  'rain-dance', 'sunny-day', 'sandstorm', 'snowscape', 'taunt', 'haze', 'rest', 'belly-drum', 'pain-split',
+  'heal-bell', 'aromatherapy', 'focus-energy', 'curse', 'defog', 'kings-shield', 'spiky-shield', 'baneful-bunker',
 ]);
 
 export const NOMBRES_RIVALES = [

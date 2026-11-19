@@ -110,6 +110,31 @@ export async function guardarPartida(partida) {
   }
 }
 
+// ---------- Equipo personalizado ----------
+const claveEquipo = () => `gc:equipo:${(sesion?.usuario || 'invitado').toLowerCase()}`;
+const equipoValido = (e) => Array.isArray(e) && e.length <= 6 && e.every((x) => Number.isInteger(x?.id) && Array.isArray(x.moves) && x.moves.length <= 4);
+
+/** Lee el equipo guardado: primero en Supabase (si hay sesión) y si no, en este navegador. */
+export async function cargarEquipo() {
+  let local = [];
+  try { local = JSON.parse(localStorage.getItem(claveEquipo()) || '[]'); } catch { local = []; }
+  if (!equipoValido(local)) local = [];
+  if (!cliente || !sesion) return local;
+  try {
+    const remoto = await rpc('obtener_equipo', { p_token: sesion.token });
+    if (equipoValido(remoto) && remoto.length) { localStorage.setItem(claveEquipo(), JSON.stringify(remoto)); return remoto; }
+  } catch (e) { console.warn('No se pudo leer el equipo de Supabase', e); }
+  return local;
+}
+
+/** Guarda el equipo en este navegador y en Supabase. */
+export async function guardarEquipo(equipo) {
+  const limpio = equipo.filter((x) => x && x.id).map((x) => ({ id: x.id, moves: x.moves.slice(0, 4) })).slice(0, 6);
+  localStorage.setItem(claveEquipo(), JSON.stringify(limpio));
+  if (!cliente || !sesion) return { ok: true, remoto: false };
+  try { await rpc('guardar_equipo', { p_token: sesion.token, p_equipo: limpio }); return { ok: true, remoto: true }; } catch (e) { return { ok: false, error: e.message }; }
+}
+
 function rankingDesde(filas) {
   const m = new Map();
   for (const f of filas) {

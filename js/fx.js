@@ -10,6 +10,8 @@ const TAU = Math.PI * 2;
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const espera = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const hashTxt = (txt) => { let h = 2166136261; for (const ch of String(txt)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
+function semilla(n) { let a = n >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let x = a; x = Math.imul(x ^ (x >>> 15), x | 1); x ^= x + Math.imul(x ^ (x >>> 7), x | 61); return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; }
 
 // Paleta y forma de partícula por tipo
 const ESTILO = {
@@ -70,6 +72,9 @@ export function formaDe(move) {
     return 'hechizo';
   }
   if (meta.drain > 0) return 'drenar';
+  if (/explosion|self-destruct|misty-explosion|mind-blown|final-gambit|chloroblast/.test(n)) return 'explosion';
+  if (/vortex|whirlpool|fire-spin|twister|whirlwind|sand-tomb|leaf-tornado|hurricane|bleakwind|sandsear|wildbolt|springtide|aeroblast|rapid-spin|mortal-spin|ice-spinner|tornado/.test(n)) return 'tornado';
+  if (/bullet-seed|pin-missile|icicle-spear|rock-blast|spike-cannon|water-shuriken|scale-shot|seed-bomb|barrage|egg-bomb|magnet-bomb|shadow-ball|energy-ball|focus-blast|aura-sphere|sludge-bomb|weather-ball|electro-ball|gyro-ball|mist-ball|pyro-ball/.test(n) && move.meta?.maxHits) return 'lluvia';
   if (/earthquake|magnitude|bulldoze|earth-power|precipice|fissure|stomping|high-horsepower|land-wrath|thousand/.test(n)) return 'sismo';
   if (/^thunder$|thunderclap|rock-slide|avalanche|meteor|icicle-crash|blizzard|hail|draco-meteor|rock-tomb|sky|dragon-rush|bolt-strike|hurricane|zap-cannon/.test(n)) return 'caida';
   if (/bite|fang|crunch|jaw|super-fang/.test(n)) return 'mordida';
@@ -647,8 +652,22 @@ export class Efectos {
     const tipo = ESTILO[move.type] ? move.type : 'normal';
     const forma = formaDe(move);
     const fuerte = (move.power || 0) >= 100;
+    const r = semilla(hashTxt(move.name || move.nombre));
     if (fuerte || forma === 'sismo' || forma === 'caida') this._tintar(tipo, 0.7);
+    const principal = this._formaPrincipal(move, forma, tipo, a, b, fuerte, r);
+    // firma visual propia de cada movimiento (elegida por su nombre)
+    const firma = Math.floor(r() * 7);
+    const objetivo = move.category === 'status' && ['user', 'users-field', 'user-and-allies'].includes(move.target) ? a : b;
+    await principal;
+    if (move.category !== 'status' || firma < 4) this._firma(firma, tipo, objetivo, r, (move.power || 60) / 80);
+    if ((move.power || 0) >= 120 && !this.reducido) this._destello(b.x, b.y, tipo, 140);
+  }
+
+  _formaPrincipal(move, forma, tipo, a, b, fuerte, r) {
     switch (forma) {
+      case 'explosion': return this._explosion(tipo, a);
+      case 'tornado': return this._tornado(tipo, b, r);
+      case 'lluvia': return this._lluvia(tipo, a, b, Math.min(5, move.meta?.maxHits || 3));
       case 'rayo': return this._rayoLineal(tipo, a, b);
       case 'golpe': return this._golpe(tipo, b, { veces: move.meta?.maxHits ? 1 : (tipo === 'fighting' && fuerte ? 3 : 1) });
       case 'mordida': return this._mordida(tipo, b);
@@ -666,11 +685,143 @@ export class Efectos {
       case 'polvo': return this._polvo(tipo, b);
       case 'sonido': return this._sonido(tipo, a, b);
       case 'hechizo': return this._hechizo(tipo, a, b);
-      default: return this._proyectil(tipo, a, b, { grande: fuerte, cantidad: move.meta?.maxHits ? 2 : 1 });
+      default: return this._proyectil(tipo, a, b, { grande: fuerte, cantidad: move.meta?.maxHits ? Math.min(4, move.meta.maxHits) : 1 + Math.floor(r() * 2.2) });
     }
+  }
+
+  /** Remate distinto según el movimiento: espiral, estrella, doble anillo, chispas, columna… */
+  _firma(n, tipo, b, r, fuerza = 1) {
+    const e = ESTILO[tipo] || ESTILO.normal;
+    const esc = this.w / 600 + 0.35;
+    const f = Math.max(0.6, Math.min(1.6, fuerza));
+    switch (n) {
+      case 0: { // espiral de partículas
+        const giro = r() < 0.5 ? 1 : -1;
+        this._forma(0.6, (ctx, k) => {
+          for (let i = 0; i < 3; i++) {
+            const ang = giro * (k * 9 + i * 2.1); const rad = (70 - k * 55) * esc * f;
+            this._emitir(tipo, b.x + Math.cos(ang) * rad, b.y + Math.sin(ang) * rad * 0.7, 1, { vmin: 5, vmax: 30, vidaMin: 0.2, vidaMax: 0.4, tmin: 3, tmax: 6 });
+          }
+        });
+        break;
+      }
+      case 1: { // estrella de rayos
+        const puntas = 5 + Math.floor(r() * 4); const giro = r() * TAU;
+        this._forma(0.45, (ctx, k) => {
+          ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 1 - k; ctx.lineCap = 'round';
+          for (let i = 0; i < puntas; i++) {
+            const ang = giro + (i / puntas) * TAU; const l = (30 + 90 * k) * esc * f;
+            ctx.strokeStyle = i % 2 ? e.c[1] : '#ffffff'; ctx.lineWidth = (6 - 4 * k) * esc;
+            ctx.beginPath(); ctx.moveTo(b.x + Math.cos(ang) * l * 0.35, b.y + Math.sin(ang) * l * 0.35); ctx.lineTo(b.x + Math.cos(ang) * l, b.y + Math.sin(ang) * l); ctx.stroke();
+          }
+          ctx.restore();
+        });
+        break;
+      }
+      case 2: // doble anillo
+        this._anillo(tipo, b.x, b.y, { r1: 110 * f, ancho: 6, dur: 0.5 });
+        setTimeout(() => this._anillo(tipo, b.x, b.y, { r1: 70 * f, ancho: 4, dur: 0.45, color: e.c[0] }), 120);
+        break;
+      case 3: // chispas que suben
+        this._emitir(tipo, b.x, b.y + 20 * esc, Math.round(22 * f), { ang: -Math.PI / 2, abanico: 0.7, vmin: 90, vmax: 260, ay: 120, forma: 'brillo', vidaMin: 0.4, vidaMax: 0.9 });
+        break;
+      case 4: { // columna de luz
+        this._forma(0.5, (ctx, k) => {
+          ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = (1 - k) * 0.8;
+          const w = (34 - 20 * k) * esc * f;
+          const g = ctx.createLinearGradient(b.x - w, 0, b.x + w, 0);
+          g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, e.c[1]); g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g; ctx.fillRect(b.x - w, b.y - 160 * esc, w * 2, 220 * esc);
+          ctx.restore();
+        });
+        break;
+      }
+      case 5: // lluvia de fragmentos
+        this._emitir(tipo, b.x, b.y - 30 * esc, Math.round(18 * f), { vmin: 120, vmax: 340, ay: 700, tmin: 3, tmax: 7, vidaMin: 0.4, vidaMax: 0.8 });
+        break;
+      default: // onda expansiva elíptica
+        this._forma(0.5, (ctx, k) => {
+          ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 1 - k;
+          ctx.strokeStyle = e.c[2]; ctx.lineWidth = (8 - 6 * k) * esc;
+          ctx.beginPath(); ctx.ellipse(b.x, b.y + 30 * esc, (20 + 140 * k) * esc * f, (6 + 30 * k) * esc * f, 0, 0, TAU); ctx.stroke();
+          ctx.restore();
+        });
+    }
+  }
+
+  async _explosion(tipo, a) {
+    const esc = this.w / 600 + 0.35;
+    this._tintar('fire', 0.8);
+    for (let i = 0; i < 4; i++) {
+      const x = a.x + rnd(-40, 40) * esc; const y = a.y + rnd(-30, 30) * esc;
+      this._impacto(i % 2 ? 'fire' : tipo, x, y, 1.5);
+      this._emitir('fire', x, y, 30, { vmin: 100, vmax: 420, tmin: 5, tmax: 14, vidaMax: 1 });
+      await espera(90 / this.vel);
+    }
+    this._anillo('fire', a.x, a.y, { r1: 260, ancho: 12, dur: 0.7, color: '#ffffff' });
+    this.arena.classList.remove('temblor'); void this.arena.offsetWidth; this.arena.classList.add('temblor');
+    await espera(250 / this.vel);
+  }
+
+  async _tornado(tipo, b, r) {
+    const esc = this.w / 600 + 0.35;
+    const giro = r() < 0.5 ? 1 : -1;
+    const dur = 0.9;
+    this._forma(dur, (ctx, k) => {
+      for (let i = 0; i < 5; i++) {
+        const alto = (i / 5) * 150 * esc; const rad = (18 + i * 12) * esc * (0.6 + 0.4 * Math.sin(k * Math.PI));
+        const ang = giro * (k * 16 + i * 1.3);
+        this._emitir(tipo, b.x + Math.cos(ang) * rad, b.y + 40 * esc - alto, 1, { vmin: 4, vmax: 20, vidaMin: 0.2, vidaMax: 0.35, tmin: 3, tmax: 7 });
+      }
+    });
+    await espera((dur * 600) / this.vel);
+    this._impacto(tipo, b.x, b.y, 1.1);
+  }
+
+  async _lluvia(tipo, a, b, n) {
+    const esc = this.w / 600 + 0.35;
+    for (let i = 0; i < n; i++) {
+      const destino = { x: b.x + rnd(-30, 30) * esc, y: b.y + rnd(-25, 25) * esc };
+      this._proyectil(tipo, { x: a.x + rnd(-10, 10), y: a.y + rnd(-10, 10) }, destino, { grande: false, cantidad: 1 });
+      await espera(120 / this.vel);
+    }
+    await espera(420 / this.vel);
   }
 
   /** Pequeño efecto de impacto adicional (para golpes múltiples o daño residual). */
   golpecito(tipo, b) { this._impacto(ESTILO[tipo] ? tipo : 'normal', b.x, b.y, 0.6); }
   estado(tipo, b) { this._emitir(tipo, b.x, b.y, 14, { ay: -80, vmin: 20, vmax: 90, forma: 'brillo' }); }
+
+  /** Destello al abrirse la Poké Ball. */
+  destelloBall(b) {
+    this._destello(b.x, b.y, 'normal', 90);
+    this._anillo('normal', b.x, b.y, { r0: 4, r1: 120, dur: 0.5, ancho: 7, color: '#ffffff' });
+    this._anillo('electric', b.x, b.y, { r0: 2, r1: 70, dur: 0.4, ancho: 4, color: '#fff3b0' });
+    this._emitir('normal', b.x, b.y, 26, { vmin: 80, vmax: 320, forma: 'brillo', color: '#ffffff', ay: -40, vidaMax: 0.6, luz: true });
+  }
+
+  /** Burbuja protectora (Protección, Detección…). */
+  escudo(b) {
+    const esc = this.w / 600 + 0.35;
+    const R = 78 * esc;
+    this._forma(0.75, (ctx, k) => {
+      const ap = k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = Math.max(0, ap) * 0.9;
+      const r = R * (0.85 + 0.15 * Math.min(1, k * 4));
+      const g = ctx.createRadialGradient(b.x, b.y, r * 0.55, b.x, b.y, r);
+      g.addColorStop(0, 'rgba(120,255,200,0)'); g.addColorStop(0.85, 'rgba(120,255,210,.35)'); g.addColorStop(1, 'rgba(210,255,240,.9)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, TAU); ctx.fill();
+      // hexágonos del escudo
+      ctx.strokeStyle = 'rgba(200,255,235,.7)'; ctx.lineWidth = 1.5 * esc;
+      for (let i = 0; i < 7; i++) {
+        const ang = (i / 7) * TAU + k * 1.5; const hx = b.x + Math.cos(ang) * r * 0.62; const hy = b.y + Math.sin(ang) * r * 0.62;
+        ctx.beginPath();
+        for (let j = 0; j <= 6; j++) { const a2 = (j / 6) * TAU; ctx[j ? 'lineTo' : 'moveTo'](hx + Math.cos(a2) * r * 0.2, hy + Math.sin(a2) * r * 0.2); }
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  }
 }

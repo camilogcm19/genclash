@@ -7,7 +7,7 @@ Versión publicada: https://camilogcm19.github.io/genclash/
 ## Qué hace
 
 - **Consumo de API (PokeAPI):** por partida se hacen entre 60 y 150 consultas a `/generation`, `/pokemon`, `/pokemon-species` y `/move`. Se usan nombres en español, tipos, estadísticas base, movimientos reales, sprites animados y los gritos de cada Pokémon.
-- **Motor de batalla propio:** fórmula oficial de daño, STAB, tabla de 18 tipos, golpes críticos, precisión, prioridad, velocidad, golpes múltiples, absorción y retroceso, cambios de estadísticas (−6 a +6) y estados (quemadura, parálisis, veneno, veneno grave, sueño, congelación y confusión).
+- **Motor de batalla propio:** fórmula oficial de daño, STAB, tabla de 18 tipos, golpes críticos, precisión y evasión, prioridad, velocidad, golpes múltiples, absorción y retroceso, clima, pantallas, trampas, cambios de estadísticas (−6 a +6) y estados (quemadura, parálisis, veneno, veneno grave, sueño, congelación y confusión).
 - **Login sin correo:** cuentas con usuario y contraseña, cifrada con bcrypt dentro de Supabase (funciones `registrar`, `iniciar_sesion`, `guardar_partida`). Nadie puede escribir en el ranking a nombre de otro.
 - **Jugador contra jugador en línea:** Supabase Realtime (Presence + Broadcast) empareja a quienes buscan en la misma generación. Los dos navegadores corren el mismo motor con la misma semilla aleatoria y solo intercambian las acciones de cada turno. Incluye temporizador de 60 s por turno, rendición y victoria por abandono.
 - **Efectos 3D hechos en Blender:** `blender/efectos_genclash.py` genera con Cycles una explosión animada para cada uno de los 18 tipos (fuego con humo, relámpagos, salpicaduras, cristales de hielo, nubes fantasma, rocas…) y la guarda como hoja de sprites en `assets/fx/`. El juego la reproduce en el impacto de cada ataque.
@@ -15,6 +15,12 @@ Versión publicada: https://camilogcm19.github.io/genclash/
 - **Batallas con más vida:** pantalla VS de entrada, carga de energía, proyectiles 3D (también renderizados en Blender), oscurecimiento del escenario, destello y retroceso al recibir golpes, letreros de súper eficaz y crítico, barra de PS que baja poco a poco con rastro y confeti al ganar.
 - **Opción Solo legendarios:** cartucho dorado con 89 legendarios y singulares de todas las generaciones (contra la computadora o en línea).
 - **Animaciones por ataque:** motor de partículas en canvas (`js/fx.js`). Cada movimiento se anima según su tipo (18 paletas) y su forma (rayo, proyectil, golpe, mordida, garras, sismo, caída, drenaje, ondas, polvos, sonido, aura, curación).
+- **Modo personalizado ("Mi equipo"):** buscador con los 1025 Pokémon y su lista real de movimientos aprendibles (tipo, categoría, potencia, precisión y PP). Eliges 6 Pokémon y 4 ataques para cada uno; el equipo se guarda en tu cuenta (tabla `equipos` con las funciones `guardar_equipo` y `obtener_equipo`, ver `supabase/equipos.sql`). Sirve contra la computadora y en línea.
+- **Casi todos los movimientos:** el motor soporta movimientos de carga (Rayo Solar, Vuelo, Excavar, Buceo…), de recarga (Hiperrayo, Gigaimpacto…), de furia (Enfado, Golpe…), potencia variable (Patada Baja, Giro Bola, Movimiento Sísmico, Superdiente, Salpicar…), golpes de un solo KO, autodestrucción, Contraataque y Manto Espejo, Sorpresa, Golpe Bajo, Premonición, protecciones, climas (lluvia, sol, arena, nieve), pantallas (Reflejo, Pantalla de Luz, Velo Aurora), trampas de entrada (Trampa Rocas, Púas, Púas Tóxicas), Drenadoras, Mofa, Descanso, Tambor, Niebla, Divide Dolor, Deseo Cura y cambios de precisión y evasión. Solo quedan fuera unos 40 que dependen de objetos o de combates dobles.
+- **Información táctica:** cada botón de ataque muestra el % de daño mínimo y máximo que hará al rival (con aviso de KO seguro o posible). Tu caja de PS muestra tu velocidad exacta y la del rival aparece como rango posible (mínimo y máximo según naturaleza y entrenamiento). Los botones de cambio muestran los tipos de cada Pokémon.
+- **Poké Ball de verdad:** al entrar, la Poké Ball vuela en arco desde la esquina del entrenador, rebota, se abre con un destello y el Pokémon se materializa; al retirarlo, un rayo rojo lo regresa.
+- **Cada ataque se ve y suena distinto:** además del tipo, el nombre de cada movimiento define una "firma" (espiral, estrella, doble anillo, columna de luz…), el número de proyectiles y su sonido (tono, capas de golpe, rayo, canto, tajo, mordida, explosión, viento…). Hay formas nuevas para tornados, explosiones y ráfagas.
+- **Música nueva:** tres temas originales sintetizados: uno tranquilo para el menú, uno de combate (Re menor, 172 BPM) y uno épico con timbales y coro para batallas con legendarios.
 - **Rival con IA:** calcula el daño esperado de cada movimiento, busca noquear, usa movimientos de estado cuando conviene y cambia de Pokémon si está en desventaja.
 - **Niveles balanceados:** como en los combates aleatorios de Showdown, los Pokémon fuertes pelean a menor nivel.
 - **Base de datos (Supabase):** tabla `partidas`, vista `ranking`, políticas RLS y suscripción en tiempo real (cuando alguien termina una batalla, aparece al instante en todas las pantallas abiertas).
@@ -39,6 +45,7 @@ genclash/
 │   ├── data.js           Tabla de tipos, traducciones, generaciones
 │   └── audio.js          Efectos de sonido y gritos
 └── supabase/schema.sql   Script para crear la base de datos
+└── supabase/equipos.sql  Tabla y funciones de los equipos personalizados (ya incluidas en schema.sql)
 ```
 
 No necesita `npm install` ni compilación: es HTML, CSS y JavaScript con módulos.
