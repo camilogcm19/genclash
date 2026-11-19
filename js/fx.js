@@ -63,6 +63,10 @@ export function formaDe(move) {
   const t = move.type;
   const meta = move.meta || {};
   if (move.category === 'status') {
+    if (/stealth-rock|spikes|sticky-web/.test(n)) return 'trampa';
+    if (/rain-dance|sunny-day|sandstorm|^hail$|snowscape|chilly-reception/.test(n)) return 'clima';
+    if (/reflect|light-screen|aurora-veil|protect|detect|shield|bunker|obstruct|silk-trap|bulwark|safeguard|^mist$/.test(n)) return 'escudo';
+    if (n === 'leech-seed') return 'semilla';
     if (meta.category === 'heal' || meta.healing > 0) return 'curar';
     if (['user', 'users-field', 'user-and-allies'].includes(move.target)) return 'aura';
     if (/powder|spore/.test(n)) return 'polvo';
@@ -98,7 +102,7 @@ export class Efectos {
     this.formas = [];   // trazos especiales (rayos, anillos, tajos, mandíbulas…)
     this.tinte = null;
     this.vel = 1;
-    this.reducido = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    this.reducido = localStorage.getItem('gc:reducido') === '1';
     this._loop = this._loop.bind(this);
     this._ultimo = 0;
     this._activo = false;
@@ -432,7 +436,7 @@ export class Efectos {
 
   async _proyectil(tipo, a, b, { grande = false, cantidad = 1 } = {}) {
     const e = ESTILO[tipo] || ESTILO.normal;
-    const dur = 0.42;
+    const dur = 0.52;
     const esc = this.w / 600 + 0.35;
     for (let n = 0; n < cantidad; n++) {
       const arco = rnd(-0.25, 0.1) * Math.hypot(b.x - a.x, b.y - a.y);
@@ -618,7 +622,8 @@ export class Efectos {
     }
   }
 
-  async _polvo(tipo, b) {
+  async _polvo(tipo, b, a) {
+    if (a) { for (let i = 0; i < 6; i++) this._emitir(tipo, a.x, a.y, 4, { ang: Math.atan2(b.y - a.y, b.x - a.x), abanico: 0.35, vmin: 160, vmax: 300, friccion: 0.96, forma: 'punto', tmin: 2, tmax: 4, vidaMin: 0.6, vidaMax: 0.9 }); await espera(220 / this.vel); }
     for (let i = 0; i < 5; i++) {
       this._emitir(tipo, b.x + rnd(-40, 40), b.y - 70, 8, { ang: Math.PI / 2, abanico: 0.8, vmin: 20, vmax: 70, ay: 40, forma: 'punto', tmin: 2, tmax: 4, vidaMin: 0.8, vidaMax: 1.3 });
       await espera(70 / this.vel);
@@ -634,8 +639,84 @@ export class Efectos {
     }
   }
 
+  /** Una chispa de energía que viaja del atacante al objetivo (para que todo se vea "lanzado"). */
+  async _lanzarChispa(tipo, a, b, dur = 0.38) {
+    const e = ESTILO[tipo] || ESTILO.normal;
+    const esc = this.w / 600 + 0.35;
+    const arco = -0.18 * Math.hypot(b.x - a.x, b.y - a.y);
+    this._forma(dur, (ctx, k) => {
+      const x = a.x + (b.x - a.x) * k; const y = a.y + (b.y - a.y) * k + Math.sin(k * Math.PI) * arco;
+      this._emitir(tipo, x, y, 2, { vmin: 5, vmax: 40, vidaMin: 0.2, vidaMax: 0.4, tmin: 2, tmax: 5, forma: 'brillo' });
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      const r = 11 * esc;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 2);
+      g.addColorStop(0, '#ffffff'); g.addColorStop(0.4, e.c[1]); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 2, 0, TAU); ctx.fill(); ctx.restore();
+    });
+    await espera((dur * 1000) / this.vel);
+  }
+
+  async _trampa(nombre, a, b) {
+    const esc = this.w / 600 + 0.35;
+    const toxica = nombre === 'toxic-spikes'; const rocas = nombre === 'stealth-rock'; const red = nombre === 'sticky-web';
+    const n = rocas ? 6 : 7;
+    const suelo = b.y + 34 * esc;
+    for (let i = 0; i < n; i++) {
+      const dx = (i - (n - 1) / 2) * 26 * esc; const destino = { x: b.x + dx, y: (rocas ? b.y - 30 * esc + (i % 2) * 22 * esc : suelo + (i % 2) * 8 * esc) };
+      const arco = -(90 + (i % 3) * 30) * esc; const giro = rnd(4, 9);
+      this._forma(0.55, (ctx, k) => {
+        const x = a.x + (destino.x - a.x) * k; const y = a.y + (destino.y - a.y) * k + Math.sin(k * Math.PI) * arco;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(k * giro);
+        if (rocas) {
+          ctx.fillStyle = '#9c8540'; ctx.strokeStyle = '#4a3c18'; ctx.lineWidth = 2;
+          ctx.beginPath(); [[-9, -4], [-3, -10], [7, -7], [10, 2], [4, 9], [-6, 8]].forEach(([px, py], j) => ctx[j ? 'lineTo' : 'moveTo'](px * esc, py * esc)); ctx.closePath(); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = 'rgba(255,240,190,.5)'; ctx.beginPath(); ctx.arc(-2 * esc, -4 * esc, 3 * esc, 0, TAU); ctx.fill();
+        } else if (red) {
+          ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 1.5; for (let r2 = 4; r2 < 14; r2 += 4) { ctx.beginPath(); ctx.arc(0, 0, r2 * esc, 0, TAU); ctx.stroke(); }
+        } else {
+          ctx.fillStyle = toxica ? '#9b3fc9' : '#5b5f73'; ctx.strokeStyle = toxica ? '#f3d1ff' : '#d0d4e4'; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(0, -9 * esc); ctx.lineTo(7 * esc, 6 * esc); ctx.lineTo(-7 * esc, 6 * esc); ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
+        ctx.restore();
+      });
+      await espera(70 / this.vel);
+    }
+    await espera(480 / this.vel);
+    this._emitir(rocas ? 'rock' : toxica ? 'poison' : 'ground', b.x, suelo, 18, { ang: -Math.PI / 2, abanico: 1.2, vmin: 60, vmax: 200, ay: 500, tmin: 2, tmax: 5 });
+    this._anillo(rocas ? 'rock' : toxica ? 'poison' : 'ground', b.x, suelo, { r1: 110, ancho: 4, dur: 0.45 });
+  }
+
+  async _clima(nombre, a) {
+    const tipo = { 'rain-dance': 'water', 'sunny-day': 'fire', sandstorm: 'ground', hail: 'ice', snowscape: 'ice', 'chilly-reception': 'ice' }[nombre] || 'normal';
+    const esc = this.w / 600 + 0.35;
+    this._tintar(tipo, 1.2);
+    this._anillo(tipo, a.x, a.y, { r0: 10, r1: 160, ancho: 7, dur: 0.7 });
+    for (let i = 0; i < 8; i++) {
+      this._emitir(tipo, a.x + rnd(-30, 30) * esc, a.y, 6, { ang: -Math.PI / 2, abanico: 0.25, vmin: 260, vmax: 420, ay: -80, forma: 'brillo', luz: true, vidaMin: 0.6, vidaMax: 1 });
+      await espera(60 / this.vel);
+    }
+    // del cielo cae el clima sobre toda la arena
+    for (let i = 0; i < 26; i++) this._emitir(tipo, rnd(0, this.w), -10, 1, { ang: Math.PI / 2 + (nombre === 'sandstorm' ? -0.6 : 0.15), abanico: 0.1, vmin: 300, vmax: 480, ay: 200, tmin: 3, tmax: 6, vidaMin: 0.8, vidaMax: 1.3, friccion: 1 });
+    await espera(300 / this.vel);
+  }
+
+  async _escudoMov(tipo, a) {
+    this.escudo(a);
+    this._anillo(tipo, a.x, a.y, { r0: 20, r1: 95, ancho: 5, dur: 0.55 });
+    this._emitir(tipo, a.x, a.y, 16, { vmin: 40, vmax: 140, forma: 'brillo', luz: true });
+    await espera(450 / this.vel);
+  }
+
+  async _semilla(a, b) {
+    for (let i = 0; i < 3; i++) { this._lanzarChispa('grass', a, { x: b.x + (i - 1) * 18, y: b.y }, 0.4); }
+    await espera(160 / this.vel);
+    for (let i = 0; i < 3; i++) this._emitir('grass', b.x + (i - 1) * 20, b.y + 20, 8, { ang: -Math.PI / 2, abanico: 0.6, vmin: 40, vmax: 140, forma: 'hoja' });
+    this._anillo('grass', b.x, b.y, { r0: 80, r1: 15, ancho: 4, dur: 0.5 });
+  }
+
   async _hechizo(tipo, a, b) {
     const e = ESTILO[tipo] || ESTILO.normal;
+    await this._lanzarChispa(tipo, a, b);
     if (tipo === 'electric') { for (let i = 0; i < 3; i++) { this._rayo(b.x + rnd(-40, 40), b.y - 60, b.x + rnd(-30, 30), b.y + 30, tipo, 0.25, 3); await espera(90 / this.vel); } return; }
     for (let i = 0; i < 3; i++) {
       this._anillo(tipo, b.x, b.y, { r0: 110, r1: 10, ancho: 5, dur: 0.5, color: e.c[2] });
@@ -659,13 +740,17 @@ export class Efectos {
     const firma = Math.floor(r() * 7);
     const objetivo = move.category === 'status' && ['user', 'users-field', 'user-and-allies'].includes(move.target) ? a : b;
     await principal;
-    if (move.category !== 'status' || firma < 4) this._firma(firma, tipo, objetivo, r, (move.power || 60) / 80);
+    if (!['trampa', 'clima', 'escudo', 'semilla'].includes(forma) && (move.category !== 'status' || firma < 4)) this._firma(firma, tipo, objetivo, r, (move.power || 60) / 80);
     if ((move.power || 0) >= 120 && !this.reducido) this._destello(b.x, b.y, tipo, 140);
   }
 
   _formaPrincipal(move, forma, tipo, a, b, fuerte, r) {
     switch (forma) {
       case 'explosion': return this._explosion(tipo, a);
+      case 'trampa': return this._trampa(move.name, a, b);
+      case 'clima': return this._clima(move.name, a);
+      case 'escudo': return this._escudoMov(tipo, a);
+      case 'semilla': return this._semilla(a, b);
       case 'tornado': return this._tornado(tipo, b, r);
       case 'lluvia': return this._lluvia(tipo, a, b, Math.min(5, move.meta?.maxHits || 3));
       case 'rayo': return this._rayoLineal(tipo, a, b);
@@ -682,7 +767,7 @@ export class Efectos {
         return this._aura(porStat[st] || tipo, a);
       }
       case 'curar': return this._curar(a);
-      case 'polvo': return this._polvo(tipo, b);
+      case 'polvo': return this._polvo(tipo, b, a);
       case 'sonido': return this._sonido(tipo, a, b);
       case 'hechizo': return this._hechizo(tipo, a, b);
       default: return this._proyectil(tipo, a, b, { grande: fuerte, cantidad: move.meta?.maxHits ? Math.min(4, move.meta.maxHits) : 1 + Math.floor(r() * 2.2) });

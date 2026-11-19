@@ -10,7 +10,7 @@ import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCamb
 import { decidirAccion, mejorReemplazo } from './ai.js';
 import * as db from './db.js';
 import { sfx, grito, alternarSonido, modoSonido, iniciarMusica, detenerMusica } from './audio.js';
-import { Efectos, precargarHojas } from './fx.js';
+import { Efectos, precargarHojas, formaDe } from './fx.js';
 import { buscarRival, conectarPresencia } from './online.js';
 import { URL_PUBLICA } from './config.js';
 
@@ -19,7 +19,10 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const BALL = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png';
-const reducido = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Las animaciones son parte del juego: solo se reducen si el jugador lo pide (gc:reducido = '1'),
+// no por la configuración del sistema (en muchas PC con Windows viene apagada y el juego se veía "acelerado").
+const reducido = localStorage.getItem('gc:reducido') === '1';
+document.documentElement.classList.toggle('reducido', reducido);
 
 const estado = {
   usuario: null,
@@ -697,6 +700,7 @@ function iniciarBatalla() {
   $('#turnoChip').textContent = 'Turno 1';
   for (const s of ['player', 'rival']) { spriteDe(s).className = 'sprite'; hpbox[s].classList.remove('visible'); slot[s].classList.remove('con-pantalla'); }
   pintarClima(null);
+  arena.querySelectorAll('.trampas-capa').forEach((c) => { c.innerHTML = ''; });
   $('#btnRevancha').textContent = enPvp() ? 'Buscar otro rival' : 'Revancha';
   mostrar('batalla');
   ajustarEscala();
@@ -801,7 +805,7 @@ function renderHp(side) {
     <div class="hp-top"><span class="nombre">${esc(mon.nombre)}</span><span class="nivel">Nv. ${mon.level}</span></div>
     <div class="tipos">${mon.types.map(badgeTipo).join('')}${vel}</div>
     <div class="hp-fila"><b>PS</b><div class="barra-hp"><div class="rastro" style="width:${pct}%"></div><div class="relleno ${nivel}" style="width:${pct}%"></div></div></div>
-    <div class="hp-info">${est}<span class="boosts">${boosts}</span><span class="hp-num">${side === 'player' ? `${Math.round(hpVis)}/${m.maxHp}` : `${pct}%`}</span></div>
+    <div class="hp-info">${est}<span class="boosts">${boosts}${m.marcas?.semilla ? '<span class="boost marca-semilla">Drenadoras</span>' : ''}${m.marcas?.maldicion ? '<span class="boost neg">Maldito</span>' : ''}</span><span class="hp-num">${side === 'player' ? `${Math.round(hpVis)}/${m.maxHp}` : `${pct}%`}</span></div>
     <div class="equipo-puntos" aria-label="Pokémon restantes">${puntos}</div>`;
   hpbox[side].setAttribute('aria-label', `${mon.nombre}, ${pct}% de PS`);
   hpbox[side].classList.toggle('critico', side === 'player' && pct > 0 && pct <= 20);
@@ -907,18 +911,59 @@ async function animAtaque(side, move) {
     anim(img, [{ filter: 'brightness(1)' }, { filter: `brightness(1.8) drop-shadow(0 0 12px ${TIPOS[move.type]?.color || '#fff'})` }, { filter: 'brightness(1)' }], { duration: 420 });
     await fx.cargar(move.type, centro(side), contacto ? 0.25 : 0.42);
   }
-  // 2) Lanzamiento
+  // 2) Lanzamiento: según la forma, el Pokémon se abalanza, salta o retrocede al disparar
   sfx.ataque(move);
-  const dist = contacto ? 30 : 8;
-  const embestida = anim(img, [
-    { transform: `translate(0,0)${espejo}` },
-    { transform: `translate(${-dir[0] * 4}%, ${-dir[1] * 2}%)${espejo}`, offset: 0.2 },
-    { transform: `translate(${dir[0] * dist}%, ${dir[1] * dist * 0.5}%)${espejo}`, offset: 0.5 },
-    { transform: `translate(0,0)${espejo}` },
-  ], { duration: contacto ? 460 : 320 });
-  if (contacto) await espera(200);
-  await fx.animar(move, centro(side), centro(otroLado));
-  await embestida;
+  const forma = formaDe(move);
+  const A = centro(side); const B = centro(otroLado);
+  const embiste = contacto && ['golpe', 'mordida', 'garra', 'drenar', 'explosion', 'tornado'].includes(forma) && forma !== 'explosion';
+  const salta = contacto && !embiste;
+  let movimiento;
+  if (embiste) {
+    const dx = (B.x - A.x) * 0.62; const dy = (B.y - A.y) * 0.62;
+    movimiento = anim(img, [
+      { transform: `translate(0,0)${espejo}`, filter: 'none' },
+      { transform: `translate(${-dx * 0.08}px, ${-dy * 0.08}px) scale(.94, 1.06)${espejo}`, offset: 0.22 },
+      { transform: `translate(${dx}px, ${dy}px) scale(1.06, .95)${espejo}`, filter: 'blur(1px) brightness(1.2)', offset: 0.5 },
+      { transform: `translate(${dx * 0.9}px, ${dy * 0.9}px)${espejo}`, filter: 'none', offset: 0.62 },
+      { transform: `translate(0,0)${espejo}`, filter: 'none' },
+    ], { duration: 640, easing: 'cubic-bezier(.3,.7,.3,1)' });
+    // estela de "fantasmas" que siguen al Pokémon mientras se lanza
+    if (!reducido) {
+      for (let k = 1; k <= 3; k++) {
+        const g = img.cloneNode(); g.className = `${img.className} fantasma`; g.style.width = img.style.width;
+        img.after(g);
+        anim(g, [
+          { transform: `translate(0,0)${espejo}`, opacity: 0 },
+          { transform: `translate(${-dx * 0.08}px, ${-dy * 0.08}px)${espejo}`, opacity: 0.35 - k * 0.08, offset: 0.22 },
+          { transform: `translate(${dx * (1 - k * 0.15)}px, ${dy * (1 - k * 0.15)}px)${espejo}`, opacity: 0.3 - k * 0.07, offset: 0.5 },
+          { transform: `translate(0,0)${espejo}`, opacity: 0 },
+        ], { duration: 640, delay: k * 35, easing: 'cubic-bezier(.3,.7,.3,1)' }).then(() => g.remove());
+      }
+    }
+    await espera(300);
+  } else if (salta) {
+    movimiento = anim(img, [
+      { transform: `translateY(0)${espejo}` },
+      { transform: `translateY(4%) scale(1.06, .92)${espejo}`, offset: 0.15 },
+      { transform: `translateY(-38%) scale(.95, 1.05)${espejo}`, offset: 0.45 },
+      { transform: `translateY(3%) scale(1.08, .9)${espejo}`, offset: 0.7 },
+      { transform: `translateY(0)${espejo}` },
+    ], { duration: 560, easing: 'ease-in-out' });
+    await espera(330);
+  } else if (!estado_) {
+    // ataque a distancia: retrocede por la fuerza del disparo
+    movimiento = anim(img, [
+      { transform: `translate(0,0)${espejo}` },
+      { transform: `translate(${dir[0] * 6}%, ${dir[1] * 3}%) scale(1.05)${espejo}`, offset: 0.25 },
+      { transform: `translate(${-dir[0] * 7}%, ${-dir[1] * 3}%)${espejo}`, offset: 0.45 },
+      { transform: `translate(0,0)${espejo}` },
+    ], { duration: 420 });
+    await espera(110);
+  } else {
+    movimiento = anim(img, [{ transform: `translateY(0)${espejo}` }, { transform: `translateY(-10%)${espejo}`, offset: 0.4 }, { transform: `translateY(0)${espejo}` }], { duration: 360 });
+  }
+  await fx.animar(move, A, B);
+  await movimiento;
   oscurecer(move.type, false);
 }
 
@@ -929,7 +974,13 @@ async function animDanio(e) {
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   const c = centro(e.side);
   const pct = Math.max(1, Math.round((e.cantidad / m.maxHp) * 100));
-  if (e.residual) { fx.estado(e.estado === 'burn' ? 'fire' : 'poison', c); sfx.residual(); }
+  if (e.residual) {
+    const tipoRes = { burn: 'fire', poison: 'poison', toxic: 'poison', drenadoras: 'grass', maldicion: 'ghost', sand: 'ground', rocas: 'rock', puas: 'ground' }[e.estado] || 'normal';
+    if (e.estado === 'drenadoras') fx.animar({ name: 'leech-seed-drain', type: 'grass', category: 'special', power: 20, meta: { drain: 50 } }, centro(e.side === 'player' ? 'rival' : 'player'), c);
+    else if (e.estado === 'rocas') fx.golpecito('rock', c);
+    else fx.estado(tipoRes, c);
+    sfx.residual();
+  }
   else { fx.golpecito(e.tipo || 'normal', c); sfx.golpe(e.eff ?? 1, e.critico); }
   // Destello blanco + retroceso del Pokémon golpeado
   const atras = e.side === 'rival' ? [5, -2] : [-5, 2];
@@ -962,6 +1013,21 @@ function pintarClima(c) {
   el.hidden = !c;
   if (c) { el.textContent = `${CLIMA_ES[c].icono} ${CLIMA_ES[c].nombre}`; sfx.clima?.(c); }
 }
+/** Trampas de entrada visibles en el campo de cada lado (Trampa Rocas, Púas, Púas Tóxicas). */
+function pintarTrampas(side, t, nuevo = false) {
+  let capa = arena.querySelector(`.trampas-capa.t-${side}`);
+  if (!capa) { capa = document.createElement('div'); capa.className = `trampas-capa t-${side}`; capa.setAttribute('aria-hidden', 'true'); arena.append(capa); }
+  const piezas = [];
+  if (t?.rocas) {
+    const pos = [[6, -30], [24, -120], [50, -70], [76, -130], [94, -35]];
+    pos.forEach(([x, y], i) => piezas.push(`<i class="roca" style="left:${x}%;top:${y}%;--d:${i * 0.4}s;--r:${i * 47}deg"></i>`));
+  }
+  for (let capaN = 0; capaN < (t?.puas || 0); capaN++) for (let i = 0; i < 5; i++) piezas.push(`<i class="pua" style="left:${12 + i * 18 + capaN * 6}%;top:${58 + capaN * 14}%"></i>`);
+  for (let capaN = 0; capaN < (t?.toxicas || 0); capaN++) for (let i = 0; i < 4; i++) piezas.push(`<i class="pua toxica" style="left:${20 + i * 20 + capaN * 8}%;top:${30 + capaN * 16}%"></i>`);
+  capa.innerHTML = piezas.join('');
+  if (nuevo) capa.querySelectorAll('i').forEach((el, k) => anim(el, [{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1.3)', opacity: 1, offset: 0.6 }, { transform: 'scale(1)', opacity: 1 }], { duration: 380, delay: k * 30 }));
+}
+
 function pintarPantallas() {
   const b = estado.batalla;
   for (const lado of ['player', 'rival']) {
@@ -1081,15 +1147,35 @@ async function animDebil(side) {
   const img = spriteDe(side);
   img.classList.remove('escondido');
   const m = estado.mostrado[side];
-  m.hp = 0; m.hpVis = 0; m.estado = null;
+  m.hp = 0; m.hpVis = 0; m.estado = null; m.marcas = {};
   hpbox[side].classList.remove('critico');
   estado.caidos[side].add(estado.batalla.lados[motor(side)].equipo.indexOf(m.mon));
   grito(m.mon.grito, { velocidad: 0.75, volumen: 0.3 });
   sfx.debilitado();
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   const c = centro(side);
-  await anim(img, [{ transform: `translateY(0)${espejo}`, opacity: 1, filter: 'brightness(1)' }, { transform: `translateY(8%)${espejo}`, opacity: 1, filter: 'brightness(.6) grayscale(1)', offset: 0.3 }, { transform: `translateY(55%) scaleY(.6)${espejo}`, opacity: 0, filter: 'brightness(.4) grayscale(1)' }], { duration: 750, easing: 'ease-in' });
+  // 1) se desploma y pierde el color
+  await anim(img, [
+    { transform: `translateY(0)${espejo}`, filter: 'brightness(1)' },
+    { transform: `translateY(-4%) rotate(${side === 'player' ? 4 : -4}deg)${espejo}`, filter: 'brightness(1.3)', offset: 0.2 },
+    { transform: `translateY(12%) scaleY(.88)${espejo}`, filter: 'brightness(.65) grayscale(1)' },
+  ], { duration: 650, easing: 'ease-in', fill: 'forwards' });
   fx.golpecito('ground', { x: c.x, y: c.y + c.h * 0.35 });
+  await espera(250);
+  // 2) el rayo rojo de la Poké Ball lo regresa
+  const o = origenLanzamiento(side);
+  const rayo = particula('rayo-retorno', c.x, c.y);
+  rayo.style.width = `${Math.hypot(o.x - c.x, o.y - c.y)}px`;
+  rayo.style.transform = `rotate(${Math.atan2(o.y - c.y, o.x - c.x)}rad)`;
+  sfx.retirar();
+  anim(rayo, [{ opacity: 0, clipPath: 'inset(0 100% 0 0)' }, { opacity: 1, clipPath: 'inset(0 0 0 0)', offset: 0.35 }, { opacity: 1, clipPath: 'inset(0 0 0 0)', offset: 0.7 }, { opacity: 0, clipPath: 'inset(0 0 0 100%)' }], { duration: 650 }).then(() => rayo.remove());
+  await anim(img, [
+    { transform: `translateY(12%) scaleY(.88)${espejo}`, filter: 'brightness(.65) grayscale(1)', opacity: 1 },
+    { transform: `translateY(10%) scale(1.02, .9)${espejo}`, filter: 'brightness(.8) sepia(1) hue-rotate(-50deg) saturate(8) drop-shadow(0 0 14px #ff3b3b)', opacity: 1, offset: 0.35 },
+    { transform: `translateY(30%) scale(0)${espejo}`, filter: 'brightness(.8) sepia(1) hue-rotate(-50deg) saturate(8)', opacity: 0 },
+  ], { duration: 560, easing: 'ease-in' });
+  if (reducido) rayo.remove();
+  img.getAnimations?.().forEach((a) => a.cancel());
   img.classList.remove('visible');
   renderHp(side);
   await espera(300);
@@ -1186,6 +1272,12 @@ async function reproducir(eventosMotor) {
         break;
       }
       case 'clima': pintarClima(e.clima); break;
+      case 'trampas': pintarTrampas(e.side, e.trampas, true); await espera(250); break;
+      case 'marca': {
+        const m = estado.mostrado[e.side];
+        if (m) { (m.marcas ||= {})[e.marca] = e.on; renderHp(e.side); }
+        break;
+      }
       case 'pantalla': pintarPantallas(); break;
       case 'danio': await animDanio(e); break;
       case 'curar': await animCurar(e); break;
@@ -1237,17 +1329,11 @@ function botonMovimiento(m, n, yo, foe, b) {
   const ef = m.category === 'status' ? null : m.type === 'typeless' ? 1 : efectividad(m.type, foe.types);
   const efTxt = ef == null ? '' : ef === 0 ? '<span class="ef x0">Sin efecto</span>' : ef > 1 ? `<span class="ef x2">×${ef}</span>` : ef < 1 ? `<span class="ef xm">×${ef}</span>` : '';
   const pot = poderNominal(m);
-  let danio = '';
-  if (m.category !== 'status' && m !== RECARGA) {
-    const r = rangoDanio(yo, foe, m, b);
-    if (r?.variable) danio = '<span class="dmg var">daño variable</span>';
-    else if (r && r.eff !== 0) danio = `<span class="dmg ${r.ko ? 'ko' : r.posibleKo ? 'quiza' : ''}">${r.pctMin === r.pctMax ? `${r.pctMax}%` : `${r.pctMin}–${r.pctMax}%`}${r.ko ? ' · KO' : r.posibleKo ? ' · ¿KO?' : ''}</span>`;
-  }
   const titulo = `${m.nombre}: ${TIPOS[m.type]?.es}, ${CATEGORIAS[m.category]?.es}${pot ? `, potencia ${pot}` : ''}${m.accuracy ? `, precisión ${m.accuracy}%` : ', no falla'}${m.priority ? `, prioridad ${m.priority > 0 ? '+' : ''}${m.priority}` : ''}. ${m.desc || ''}`;
   return `<button class="mov" data-mov="${m.idx}" style="--c:${c};--t:${colorTexto(c)}" ${m.ppLeft <= 0 ? 'disabled' : ''} title="${esc(titulo)}">
     <span class="mn">${esc(m.nombre)}</span>
     <span class="md"><span>${TIPOS[m.type]?.es}</span><span>${CATEGORIAS[m.category]?.icono} ${CATEGORIAS[m.category]?.es}</span>${pot ? `<span>Pot. ${pot}</span>` : ''}<span>${m.accuracy ? `${m.accuracy}%` : '—'}</span><span class="kbd">[${n + 1}]</span></span>
-    <span class="pp">${m.idx < 0 ? '' : `${m.ppLeft}/${m.pp}`}</span>${efTxt}${danio}
+    <span class="pp">${m.idx < 0 ? '' : `${m.ppLeft}/${m.pp}`}</span>${efTxt}
   </button>`;
 }
 

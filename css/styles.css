@@ -482,11 +482,11 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
   .pv-lista { grid-template-columns: 1fr 1fr; }
   .arena { aspect-ratio: 4 / 3.4; border-radius: 12px 12px 0 0; }
   .hpbox { width: 47%; padding: 4px 8px 5px; }
-  .hpbox .tipos { gap: 3px; margin-top: 1px; }
-  .hpbox .tipo { font-size: .58rem; padding: 0 5px; line-height: 1.45; }
-  .hpbox .vel { font-size: .62rem; }
+  .hpbox .tipos { gap: 3px; margin-top: 2px; }
+  .hpbox .tipo { font-size: .72rem; padding: 1px 6px; line-height: 1.35; }
+  .hpbox .vel { font-size: .7rem; flex-basis: 100%; margin-left: 0; }
   .mov .dmg { font-size: .66rem; }
-  .cambio .ct i { font-size: .5rem; padding: 0 3px; }
+  .cambio .ct i { font-size: .66rem; padding: 0 4px; }
   .hp-info { min-height: 0; margin-top: 2px; }
   .hp-num { font-size: .8rem; }
   .equipo-puntos { margin-top: 2px; }
@@ -509,9 +509,7 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
   .turno-chip { display: none; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-}
+html.reducido *, html.reducido *::before, html.reducido *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 
 /* ============================================================
    Login, modo de juego, en línea y animaciones
@@ -661,7 +659,6 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
 .mov .dmg.quiza { background: #b86b00; }
 .mov .dmg.ko { background: var(--alerta); animation: pulso 1.3s ease-in-out infinite; }
 .mov .dmg.var { background: #3b4170; font-weight: 500; }
-.movs { row-gap: 16px; }
 .movs.uno { grid-template-columns: 1fr; }
 .movs.uno .mov { min-height: 72px; }
 
@@ -683,7 +680,7 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
 @keyframes nieve { to { background-position: 0 38px, 19px 39px, 0 0; } }
 .slot.con-pantalla::before { content: ''; position: absolute; left: 50%; bottom: 0; width: 120%; height: 115%; transform: translateX(-50%); border-radius: 50% 50% 12px 12px;
   background: linear-gradient(180deg, rgba(160, 220, 255, .22), rgba(120, 190, 255, .08)); border: 2px solid rgba(190, 235, 255, .55); box-shadow: inset 0 0 18px rgba(170, 230, 255, .35); pointer-events: none; }
-@media (prefers-reduced-motion: reduce) { .arena::after { animation: none !important; } }
+html.reducido .arena::after { animation: none !important; }
 @media (max-width: 720px) { .clima-chip { top: 3%; right: 2%; font-size: .72rem; padding: 1px 8px; } }
 
 /* ---------------- v4: Modo personalizado ---------------- */
@@ -792,4 +789,24 @@ main { padding: 0 clamp(14px, 3vw, 32px) 40px; max-width: 1280px; margin: 0 auto
   .equipo-modo legend { grid-column: 1 / -1; }
   .equipo-modo span { height: 56px; padding: 0 12px; }
   .equipo-modo .btn-editar { grid-column: 1 / -1; margin: 8px 0 0; width: 100%; height: 44px; }
+}
+
+/* ---------------- v5: trampas, estelas, marcas ---------------- */
+.trampas-capa { position: absolute; transform: translate(-50%, -50%); pointer-events: none; z-index: 3; }
+.trampas-capa.t-rival { left: 72%; top: 44%; width: 36%; height: 12%; }
+.trampas-capa.t-player { left: 27%; top: 89%; width: 48%; height: 15%; }
+.trampas-capa i { position: absolute; display: block; }
+.trampas-capa .roca { width: clamp(12px, 2.4vw, 22px); aspect-ratio: 1; translate: -50% -50%;
+  background: radial-gradient(circle at 35% 30%, #efe0b0 0 12%, #b39a55 30%, #7a6430 70%, #4a3c18);
+  clip-path: polygon(10% 30%, 40% 0, 85% 15%, 100% 60%, 70% 100%, 20% 90%, 0 60%);
+  filter: drop-shadow(0 3px 2px rgba(0, 0, 0, .35)); animation: flotar-roca 2.4s ease-in-out var(--d, 0s) infinite; }
+@keyframes flotar-roca { 0%, 100% { transform: translateY(0) rotate(var(--r, 0deg)); } 50% { transform: translateY(-35%) rotate(calc(var(--r, 0deg) + 25deg)); } }
+.trampas-capa .pua { width: clamp(8px, 1.4vw, 13px); height: clamp(10px, 1.8vw, 16px); translate: -50% -50%;
+  background: linear-gradient(180deg, #e8ebf5, #5b5f73 70%); clip-path: polygon(50% 0, 100% 100%, 0 100%); filter: drop-shadow(0 2px 1px rgba(0, 0, 0, .4)); }
+.trampas-capa .pua.toxica { background: linear-gradient(180deg, #f3d1ff, #9b3fc9 70%); }
+.slot .sprite.fantasma { position: absolute; left: 0; right: 0; bottom: 0; margin: 0 auto; pointer-events: none; filter: brightness(1.7) saturate(.4); mix-blend-mode: screen; }
+.hpbox .boost.marca-semilla { background: #3f8f2a; color: #fff; }
+@media (max-width: 720px) {
+  .trampas-capa.t-rival { left: 70%; top: 47%; width: 46%; }
+  .trampas-capa.t-player { left: 28%; top: 88%; width: 58%; }
 }

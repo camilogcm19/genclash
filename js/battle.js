@@ -553,6 +553,7 @@ function trampasDeEntrada(b, mon, ev) {
   if (t.toxicas > 0 && !vuela && mon.hp > 0) {
     if (mon.types.includes('poison')) {
       t.toxicas = 0;
+      ev.push({ t: 'trampas', side: mon.side, trampas: { ...b.lados[mon.side].trampas } });
       ev.push({ t: 'msg', texto: `¡${N(mon)} absorbió las púas tóxicas!` });
     } else if (!mon.types.includes('steel')) {
       aplicarEstado(b, mon, t.toxicas >= 2 ? 'toxic' : 'poison', ev, { silencioso: true });
@@ -853,6 +854,7 @@ function limpiarTrampas(b, side, ev) {
   const t = b.lados[side].trampas;
   if (t.rocas || t.puas || t.toxicas) {
     t.rocas = false; t.puas = 0; t.toxicas = 0;
+    ev.push({ t: 'trampas', side: side, trampas: { ...b.lados[side].trampas } });
     ev.push({ t: 'msg', texto: `¡Se despejaron las trampas del lado ${DEQ(side)}!` });
   }
 }
@@ -904,21 +906,25 @@ function movimientoEstado(b, att, def, move, ev) {
     case 'stealth-rock':
       if (ladoRival.trampas.rocas) return falla(ev);
       ladoRival.trampas.rocas = true;
+      ev.push({ t: 'trampas', side: def.side, trampas: { ...b.lados[def.side].trampas } });
       ev.push({ t: 'msg', texto: `¡Hay piedras puntiagudas flotando alrededor ${DEQ(def.side)}!` });
       return;
     case 'spikes':
       if (ladoRival.trampas.puas >= 3) return falla(ev);
       ladoRival.trampas.puas += 1;
+      ev.push({ t: 'trampas', side: def.side, trampas: { ...b.lados[def.side].trampas } });
       ev.push({ t: 'msg', texto: `¡Hay púas esparcidas alrededor ${DEQ(def.side)}!` });
       return;
     case 'toxic-spikes':
       if (ladoRival.trampas.toxicas >= 2) return falla(ev);
       ladoRival.trampas.toxicas += 1;
+      ev.push({ t: 'trampas', side: def.side, trampas: { ...b.lados[def.side].trampas } });
       ev.push({ t: 'msg', texto: `¡Hay púas tóxicas esparcidas alrededor ${DEQ(def.side)}!` });
       return;
     case 'leech-seed':
       if (def.types.includes('grass') || def.drenadoras) return falla(ev, `No afecta ${A(def)}…`);
       def.drenadoras = true;
+      ev.push({ t: 'marca', side: def.side, marca: 'semilla', on: true });
       ev.push({ t: 'anim', side: def.side, tipo: 'semilla' });
       ev.push({ t: 'msg', texto: `¡Se plantó una semilla en ${N(def, false)}!` });
       return;
@@ -974,6 +980,7 @@ function movimientoEstado(b, att, def, move, ev) {
         if (def.maldito) return falla(ev);
         aplicarDanio(b, att, Math.max(1, Math.floor(att.maxHp / 2)), ev, {});
         def.maldito = true;
+        ev.push({ t: 'marca', side: def.side, marca: 'maldicion', on: true });
         ev.push({ t: 'msg', texto: `¡${N(att)} sacrificó PS y maldijo ${A(def)}!` });
         revisarDebilitado(b, att, ev);
       } else {
