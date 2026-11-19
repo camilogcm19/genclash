@@ -1724,6 +1724,7 @@ $('#eqListo').addEventListener('click', async () => {
   resumenEquipo();
   toast(r.ok ? (r.remoto ? 'Equipo guardado en tu cuenta.' : 'Equipo guardado en este navegador.') : `Se guardó aquí, pero no en la nube: ${r.error}`, 2800);
   if (limpio.length) { estado.equipoModo = 'mio'; localStorage.setItem('gc:equipoModo', 'mio'); $$('input[name=equipo]').forEach((r2) => { r2.checked = r2.value === 'mio'; }); }
+  actualizarCTA();
   sfx.confirmar();
   mostrar('inicio');
 });
