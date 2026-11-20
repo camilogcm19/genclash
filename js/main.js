@@ -9,7 +9,7 @@ import { armarEquipo, sprites, aleatorio, contadorPeticiones, cargarPokemon, car
 import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCambio, otro, FORCEJEO, RECARGA, fmt, rngConSemilla, rangoDanio, rangoVelocidad, accionForzada, poderNominal, multEtapa, CLIMA_ES, campoDe } from './battle.js';
 import { decidirAccion, mejorReemplazo } from './ai.js';
 import * as db from './db.js';
-import { sfx, grito, alternarSonido, modoSonido, iniciarMusica, detenerMusica } from './audio.js';
+import { sfx, grito, alternarSonido, modoSonido, iniciarMusica, detenerMusica, volumenes, ajustarVolumen, VOLUMEN_DEFECTO } from './audio.js';
 import { Efectos, precargarHojas, formaDe } from './fx.js';
 import { buscarRival, conectarPresencia } from './online.js';
 import { URL_PUBLICA } from './config.js';
@@ -21,7 +21,7 @@ const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const BALL = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png';
 // Las animaciones son parte del juego: solo se reducen si el jugador lo pide (gc:reducido = '1'),
 // no por la configuración del sistema (en muchas PC con Windows viene apagada y el juego se veía "acelerado").
-const reducido = localStorage.getItem('gc:reducido') === '1';
+let reducido = localStorage.getItem('gc:reducido') === '1';
 document.documentElement.classList.toggle('reducido', reducido);
 
 const estado = {
@@ -1516,13 +1516,52 @@ document.addEventListener('keydown', (e) => {
   if (n >= 1 && n <= 4) $$('#movs .mov')[n - 1]?.click();
 });
 
-$('#btnVelocidad').addEventListener('click', (e) => {
-  estado.vel = estado.vel === 1 ? 2 : estado.vel === 2 ? 3 : 1;
-  localStorage.setItem('gc:vel', estado.vel);
-  e.currentTarget.textContent = `${estado.vel}×`;
-  document.documentElement.style.setProperty('--vel', estado.vel);
-  fx.vel = estado.vel;
+function ponerVelocidad(v) {
+  estado.vel = v;
+  localStorage.setItem('gc:vel', v);
+  $('#btnVelocidad').textContent = `${v}×`;
+  document.documentElement.style.setProperty('--vel', v);
+  fx.vel = v;
+}
+$('#btnVelocidad').addEventListener('click', () => ponerVelocidad(estado.vel === 1 ? 2 : estado.vel === 2 ? 3 : 1));
+
+// ---------- Ajustes ----------
+function ponerAnimaciones(reducidas) {
+  reducido = reducidas;
+  fx.reducido = reducidas;
+  localStorage.setItem('gc:reducido', reducidas ? '1' : '0');
+  document.documentElement.classList.toggle('reducido', reducidas);
+}
+const VOLS = [['musica', 'ajMusica'], ['efectos', 'ajEfectos'], ['gritos', 'ajGritos']];
+function pintarAjustes() {
+  const v = volumenes();
+  for (const [k, id] of VOLS) {
+    $(`#${id}`).value = v[k];
+    $(`#${id}Txt`).textContent = v[k] ? `${v[k]}%` : 'Apagado';
+  }
+  $$('input[name=ajVel]').forEach((r) => { r.checked = Number(r.value) === estado.vel; });
+  $$('input[name=ajAnim]').forEach((r) => { r.checked = (r.value === 'reducidas') === reducido; });
+}
+$('#btnAjustes').addEventListener('click', () => { pintarAjustes(); $('#modalAjustes').showModal(); });
+for (const [k, id] of VOLS) {
+  $(`#${id}`).addEventListener('input', (e) => {
+    const valor = Number(e.target.value);
+    ajustarVolumen({ [k]: valor });
+    $(`#${id}Txt`).textContent = valor ? `${valor}%` : 'Apagado';
+  });
+  // al soltar, una muestra de cómo suena
+  $(`#${id}`).addEventListener('change', () => {
+    if (k === 'efectos') sfx.ataque({ name: 'flamethrower', type: 'fire', power: 90, category: 'special' });
+    if (k === 'gritos') grito('https://raw.githubusercontent.com/PokeAPI/cries/main/cries/pokemon/latest/25.ogg');
+    if (k === 'musica' && modoSonido() === 'todo') musicaDe($('#pantalla-batalla').classList.contains('activa') ? 'batalla' : 'inicio');
+  });
+}
+$$('input[name=ajVel]').forEach((r) => r.addEventListener('change', () => { ponerVelocidad(Number(r.value)); sfx.click(); }));
+$$('input[name=ajAnim]').forEach((r) => r.addEventListener('change', () => { ponerAnimaciones(r.value === 'reducidas'); sfx.click(); }));
+$('#ajRestablecer').addEventListener('click', () => {
+  ajustarVolumen({ ...VOLUMEN_DEFECTO }); ponerVelocidad(1); ponerAnimaciones(false); pintarAjustes(); sfx.confirmar();
 });
+$('#ajListo').addEventListener('click', () => { $('#modalAjustes').close(); sfx.confirmar(); });
 
 function rendirse(sinPreguntar = false) {
   const b = estado.batalla;

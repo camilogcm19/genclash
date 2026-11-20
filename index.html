@@ -33,6 +33,9 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM5 5v3h3V5zM14 3h7v7h-7zm2 2v3h3V5zM3 14h7v7H3zm2 2v3h3v-3zM14 14h3v3h-3zM18 18h3v3h-3zM17 14h4v2h-4zM14 18h2v3h-2z"/></svg>
         <span>QR</span>
       </button>
+      <button class="btn-icono" id="btnAjustes" aria-label="Ajustes">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.5-2-3.5-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4L10.7 6a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.5 2 1.5a7.6 7.6 0 0 0 0 2l-2 1.5 2 3.5 2.4-1c.5.4 1.1.8 1.7 1l.3 2.5h4l.3-2.5c.6-.2 1.2-.6 1.7-1l2.4 1 2-3.5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      </button>
       <button class="btn-icono" id="btnSonido" aria-label="Activar o silenciar sonido">
         <svg viewBox="0 0 24 24" aria-hidden="true" class="ico-on"><path d="M4 9h4l5-4v14l-5-4H4zM16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <svg viewBox="0 0 24 24" aria-hidden="true" class="ico-off"><path d="M4 9h4l5-4v14l-5-4H4zM17 9l5 6M22 9l-5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -262,6 +265,37 @@
     <div class="fila-botones">
       <button class="btn-secundario" id="btnCopiar">Copiar enlace</button>
       <button class="btn-primario" id="btnDescargarQR">Descargar QR</button>
+    </div>
+  </dialog>
+
+  <dialog class="modal modal-ajustes" id="modalAjustes" aria-labelledby="t-ajustes">
+    <form method="dialog"><button class="cerrar" aria-label="Cerrar">×</button></form>
+    <h2 id="t-ajustes">Ajustes</h2>
+    <div class="ajustes">
+      <section class="aj-grupo" aria-label="Sonido">
+        <h3>Sonido</h3>
+        <label class="aj-vol"><span>Música</span><input type="range" min="0" max="100" step="5" id="ajMusica" /><output id="ajMusicaTxt"></output></label>
+        <label class="aj-vol"><span>Efectos y ataques</span><input type="range" min="0" max="100" step="5" id="ajEfectos" /><output id="ajEfectosTxt"></output></label>
+        <label class="aj-vol"><span>Gritos de Pokémon</span><input type="range" min="0" max="100" step="5" id="ajGritos" /><output id="ajGritosTxt"></output></label>
+        <p class="aj-nota">El botón de la bocina cambia rápido entre todo, solo efectos y silencio.</p>
+      </section>
+      <section class="aj-grupo" aria-label="Batalla">
+        <h3>Batalla</h3>
+        <fieldset class="aj-seg"><legend>Velocidad</legend>
+          <label><input type="radio" name="ajVel" value="1" /><span>Normal</span></label>
+          <label><input type="radio" name="ajVel" value="2" /><span>Rápida</span></label>
+          <label><input type="radio" name="ajVel" value="3" /><span>Turbo</span></label>
+        </fieldset>
+        <fieldset class="aj-seg"><legend>Animaciones</legend>
+          <label><input type="radio" name="ajAnim" value="completas" /><span>Completas</span></label>
+          <label><input type="radio" name="ajAnim" value="reducidas" /><span>Reducidas</span></label>
+        </fieldset>
+        <p class="aj-nota">Reducidas quita movimientos y destellos fuertes, para quien se marea o tiene una computadora lenta.</p>
+      </section>
+    </div>
+    <div class="fila-botones">
+      <button class="btn-secundario" type="button" id="ajRestablecer">Restablecer</button>
+      <button class="btn-primario" type="button" id="ajListo">Listo</button>
     </div>
   </dialog>
 

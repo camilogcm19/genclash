@@ -810,3 +810,28 @@ html.reducido .arena::after { animation: none !important; }
   .trampas-capa.t-rival { left: 70%; top: 47%; width: 46%; }
   .trampas-capa.t-player { left: 28%; top: 88%; width: 58%; }
 }
+
+
+/* ---------------- v6: Ajustes ---------------- */
+.modal-ajustes { width: min(520px, 94vw); }
+.ajustes { display: grid; gap: 18px; }
+.aj-grupo h3 { margin: 0 0 10px; font-family: var(--pixel); font-size: 1.15rem; color: var(--rayo); }
+.aj-vol { display: grid; grid-template-columns: 150px 1fr 70px; align-items: center; gap: 12px; padding: 6px 0; }
+.aj-vol span { font-size: .95rem; }
+.aj-vol output { font-family: var(--pixel); text-align: right; color: var(--niebla); }
+.aj-vol input[type=range] { width: 100%; accent-color: var(--rayo); height: 28px; cursor: pointer; }
+.aj-seg { border: 0; padding: 0; margin: 0 0 10px; display: flex; flex-wrap: wrap; }
+.aj-seg legend { font-size: .95rem; margin-bottom: 6px; padding: 0; }
+.aj-seg label { position: relative; flex: 1; }
+.aj-seg input { position: absolute; opacity: 0; inset: 0; }
+.aj-seg span { display: grid; place-items: center; height: 42px; padding: 0 10px; border: 1px solid var(--borde); background: var(--noche); color: var(--niebla); cursor: pointer; font-family: var(--pixel); text-align: center; }
+.aj-seg label:first-of-type span { border-radius: 10px 0 0 10px; }
+.aj-seg label:last-of-type span { border-radius: 0 10px 10px 0; }
+.aj-seg label + label span { border-left: 0; }
+.aj-seg input:checked + span { background: var(--rayo); color: #231a00; border-color: var(--rayo); }
+.aj-seg input:focus-visible + span { outline: 3px solid var(--rayo); outline-offset: 2px; }
+.aj-nota { margin: 4px 0 0; color: var(--gris); font-size: .82rem; }
+@media (max-width: 480px) {
+  .aj-vol { grid-template-columns: 1fr 64px; gap: 4px 10px; }
+  .aj-vol span { grid-column: 1 / -1; }
+}

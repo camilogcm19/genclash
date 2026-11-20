@@ -12,14 +12,32 @@
 let modo = localStorage.getItem('gc:sonido') || (localStorage.getItem('gc:mute') === '1' ? 'silencio' : 'todo');
 let ctx = null; let salida; let busFx; let busMusica; let envioReverb; let ruidoBuf;
 
+// Volúmenes de Ajustes (0–100). Los valores por defecto suenan igual que antes.
+const VOL_DEF = { musica: 70, efectos: 80, gritos: 70 };
+let vol = { ...VOL_DEF };
+try { vol = { ...VOL_DEF, ...JSON.parse(localStorage.getItem('gc:volumen') || '{}') }; } catch { /* valores por defecto */ }
+const gMusica = (tema) => (modo === 'todo' ? (tema === 'menu' ? 0.18 : 0.22) * (vol.musica / 70) : 0);
+const gFx = () => (modo === 'silencio' ? 0 : 0.9 * (vol.efectos / 80));
+export const volumenes = () => ({ ...vol });
+export const VOLUMEN_DEFECTO = VOL_DEF;
+/** Cambia uno o varios volúmenes (0–100) y los guarda. */
+export function ajustarVolumen(cambios) {
+  vol = { ...vol, ...cambios };
+  localStorage.setItem('gc:volumen', JSON.stringify(vol));
+  if (ctx) {
+    busFx.gain.setTargetAtTime(gFx(), ctx.currentTime, 0.05);
+    busMusica.gain.setTargetAtTime(gMusica(temaActual), ctx.currentTime, 0.1);
+  }
+}
+
 export const modoSonido = () => modo;
 export const estaSilenciado = () => modo === 'silencio';
 export function alternarSonido() {
   modo = modo === 'todo' ? 'efectos' : modo === 'efectos' ? 'silencio' : 'todo';
   localStorage.setItem('gc:sonido', modo);
   if (ctx) {
-    busFx.gain.setTargetAtTime(modo === 'silencio' ? 0 : 0.9, ctx.currentTime, 0.05);
-    busMusica.gain.setTargetAtTime(modo === 'todo' ? (temaActual === 'menu' ? 0.18 : 0.22) : 0, ctx.currentTime, 0.1);
+    busFx.gain.setTargetAtTime(gFx(), ctx.currentTime, 0.05);
+    busMusica.gain.setTargetAtTime(gMusica(temaActual), ctx.currentTime, 0.1);
   }
   return modo;
 }
@@ -33,8 +51,8 @@ function ac() {
     comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
     salida = ctx.createGain(); salida.gain.value = 0.9;
     comp.connect(salida).connect(ctx.destination);
-    busFx = ctx.createGain(); busFx.gain.value = modo === 'silencio' ? 0 : 0.9; busFx.connect(comp);
-    busMusica = ctx.createGain(); busMusica.gain.value = modo === 'todo' ? 0.22 : 0; busMusica.connect(comp);
+    busFx = ctx.createGain(); busFx.gain.value = gFx(); busFx.connect(comp);
+    busMusica = ctx.createGain(); busMusica.gain.value = gMusica('batalla'); busMusica.connect(comp);
     // Reverberación sintética (respuesta al impulso de ruido que decae)
     const rev = ctx.createConvolver();
     const largo = Math.floor(ctx.sampleRate * 1.6);
@@ -429,7 +447,8 @@ export function grito(url, { volumen = 0.35, velocidad = 1 } = {}) {
   if (modo === 'silencio' || !url) return;
   try {
     const a = new Audio(url);
-    a.volume = volumen; a.playbackRate = velocidad;
+    a.volume = Math.max(0, Math.min(1, volumen * (vol.gritos / 70))); a.playbackRate = velocidad;
+    if (a.volume === 0) return;
     a.play().catch(() => {});
   } catch { /* formato no soportado (algunos iPhone) */ }
 }
@@ -603,7 +622,7 @@ export function iniciarMusica(tema = 'batalla') {
   const P = 60 / T.bpm / 4;
   const dur = 16 * P;
   let compas = 0; let siguiente = ctx.currentTime + 0.12;
-  const g = busMusica.gain; const v = modo === 'todo' ? (tema === 'menu' ? 0.18 : 0.22) : 0;
+  const g = busMusica.gain; const v = gMusica(tema);
   g.cancelScheduledValues(ctx.currentTime); g.setValueAtTime(0.0001, ctx.currentTime); g.linearRampToValueAtTime(v, ctx.currentTime + 0.6);
   const id = setInterval(() => {
     while (siguiente < ctx.currentTime + 0.35) { T.compas(compas++, siguiente, P); siguiente += dur; }
