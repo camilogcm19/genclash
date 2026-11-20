@@ -10,7 +10,7 @@ import { crearBatalla, ejecutarTurno, cambioForzado, activo, vivos, opcionesCamb
 import { decidirAccion, mejorReemplazo } from './ai.js';
 import * as db from './db.js';
 import { sfx, grito, alternarSonido, modoSonido, iniciarMusica, detenerMusica, volumenes, ajustarVolumen, VOLUMEN_DEFECTO } from './audio.js';
-import { Efectos, precargarHojas, formaDe } from './fx.js';
+import { Efectos, precargarHojas, precargarFormas, formaDe } from './fx.js';
 import { buscarRival, conectarPresencia } from './online.js';
 import { URL_PUBLICA } from './config.js';
 
@@ -683,7 +683,42 @@ function abrirInfo(p, verMovs) {
 //  BATALLA
 // ============================================================
 const arena = $('#arena');
-const fx = new Efectos(arena);
+const escena = $('#escena'); // la capa que mueve la cámara (fondo, plataformas, Pokémon y efectos)
+const fx = new Efectos(escena, arena);
+
+// ---------- Cámara: acercamientos, congelado de impacto y cámara lenta ----------
+const cam = { s: 1, x: 0, y: 0, anim: null };
+function camara(s = 1, foco = null, dur = 380, easing = 'cubic-bezier(.2,.8,.2,1)') {
+  if (reducido) return Promise.resolve();
+  const W = escena.clientWidth; const H = escena.clientHeight;
+  let x = 0; let y = 0;
+  if (foco && s > 1) {
+    x = W / 2 - foco.x * s; y = H * 0.52 - foco.y * s;
+    x = Math.min(0, Math.max(W - W * s, x)); y = Math.min(0, Math.max(H - H * s, y));
+  }
+  const desde = `translate(${cam.x}px, ${cam.y}px) scale(${cam.s})`;
+  const hasta = `translate(${x}px, ${y}px) scale(${s})`;
+  if (desde === hasta) return Promise.resolve();
+  cam.s = s; cam.x = x; cam.y = y;
+  try { cam.anim?.cancel(); } catch { /* nada */ }
+  escena.style.transform = hasta;
+  cam.anim = escena.animate([{ transform: desde }, { transform: hasta }], { duration: dur / estado.vel, easing });
+  return cam.anim.finished.catch(() => {});
+}
+const camaraNormal = (dur = 420) => camara(1, null, dur);
+/** Congela los efectos un instante en el impacto (como en los juegos de pelea). */
+async function congelar(ms = 90) {
+  if (reducido) return;
+  const v = fx.vel; fx.vel = 0.03;
+  await new Promise((ok) => setTimeout(ok, ms));
+  fx.vel = v;
+}
+/** Cámara lenta para críticos y KO. */
+function camaraLenta(ms = 520, factor = 0.35) {
+  if (reducido) return;
+  const v = estado.vel; fx.vel = v * factor;
+  setTimeout(() => { fx.vel = estado.vel; }, ms);
+}
 fx.vel = estado.vel;
 const slot = { player: $('#slotJugador'), rival: $('#slotRival') };
 const hpbox = { player: $('#hpJugador'), rival: $('#hpRival') };
@@ -700,7 +735,8 @@ function iniciarBatalla() {
   $('#turnoChip').textContent = 'Turno 1';
   for (const s of ['player', 'rival']) { spriteDe(s).className = 'sprite'; hpbox[s].classList.remove('visible'); slot[s].classList.remove('con-pantalla'); }
   pintarClima(null);
-  arena.querySelectorAll('.trampas-capa').forEach((c) => { c.innerHTML = ''; });
+  escena.querySelectorAll('.trampas-capa').forEach((c) => { c.innerHTML = ''; });
+  camara(1, null, 1);
   $('#btnRevancha').textContent = enPvp() ? 'Buscar otro rival' : 'Revancha';
   mostrar('batalla');
   ajustarEscala();
@@ -865,16 +901,18 @@ function letrero(texto, cls = '') {
 
 /** Oscurece el escenario con el color del tipo mientras dura un ataque especial. */
 function oscurecer(tipo, on) {
-  let o = arena.querySelector('.oscuro');
-  if (!o) { o = document.createElement('div'); o.className = 'oscuro'; arena.prepend(o); }
+  let o = escena.querySelector('.oscuro');
+  if (!o) { o = document.createElement('div'); o.className = 'oscuro'; escena.querySelector('.slot').before(o); }
   o.style.setProperty('--c', TIPOS[tipo]?.color || '#000');
+  if (on) o.dataset.tipo = tipo;
   o.classList.toggle('on', on);
 }
 
 function centro(side) {
-  const a = arena.getBoundingClientRect();
+  // en coordenadas de la escena (sin el zoom de la cámara)
+  const a = escena.getBoundingClientRect(); const s = cam.s || 1;
   const r = (spriteDe(side).classList.contains('visible') ? spriteDe(side) : slot[side]).getBoundingClientRect();
-  return { x: r.left - a.left + r.width / 2, y: r.top - a.top + r.height * 0.55, w: r.width, h: r.height };
+  return { x: (r.left - a.left + r.width / 2) / s, y: (r.top - a.top + r.height * 0.55) / s, w: r.width / s, h: r.height / s };
 }
 
 function particula(cls, x, y, color, html = '') {
@@ -904,9 +942,12 @@ async function animAtaque(side, move) {
   const estado_ = move.category === 'status';
   const fuerte = (move.power || 0) >= 80;
   const otroLado = side === 'player' ? 'rival' : 'player';
-  if (!estado_ && (fuerte || move.category === 'special')) oscurecer(move.type, true);
-  // 1) Carga de energía
+  const firma = fx.tieneFirma?.(move);
+  const epico = firma || (move.power || 0) >= 100;
+  if (!estado_ || firma) oscurecer(move.type, true);
+  // 1) Carga de energía (en ataques grandes la cámara se acerca al atacante)
   if (!estado_) {
+    if (epico) camara(1.12, centro(side), 420);
     sfx.carga(move.type);
     anim(img, [{ filter: 'brightness(1)' }, { filter: `brightness(1.8) drop-shadow(0 0 12px ${TIPOS[move.type]?.color || '#fff'})` }, { filter: 'brightness(1)' }], { duration: 420 });
     await fx.cargar(move.type, centro(side), contacto ? 0.25 : 0.42);
@@ -962,6 +1003,7 @@ async function animAtaque(side, move) {
   } else {
     movimiento = anim(img, [{ transform: `translateY(0)${espejo}` }, { transform: `translateY(-10%)${espejo}`, offset: 0.4 }, { transform: `translateY(0)${espejo}` }], { duration: 360 });
   }
+  if (epico) camara(1, null, 300);
   await fx.animar(move, A, B);
   await movimiento;
   oscurecer(move.type, false);
@@ -982,6 +1024,13 @@ async function animDanio(e) {
     sfx.residual();
   }
   else { fx.golpecito(e.tipo || 'normal', c); sfx.golpe(e.eff ?? 1, e.critico); }
+  const fuerteGolpe = !e.residual && (e.critico || e.eff > 1 || pct >= 35);
+  if (fuerteGolpe) {
+    camara(e.critico ? 1.2 : 1.13, c, 110, 'ease-out');
+    if (e.critico) camaraLenta(600, 0.3);
+    await congelar(e.critico ? 140 : 85);
+    setTimeout(() => camaraNormal(520), e.critico ? 520 : 300);
+  }
   // Destello blanco + retroceso del Pokémon golpeado
   const atras = e.side === 'rival' ? [5, -2] : [-5, 2];
   anim(img, [
@@ -1015,8 +1064,8 @@ function pintarClima(c) {
 }
 /** Trampas de entrada visibles en el campo de cada lado (Trampa Rocas, Púas, Púas Tóxicas). */
 function pintarTrampas(side, t, nuevo = false) {
-  let capa = arena.querySelector(`.trampas-capa.t-${side}`);
-  if (!capa) { capa = document.createElement('div'); capa.className = `trampas-capa t-${side}`; capa.setAttribute('aria-hidden', 'true'); arena.append(capa); }
+  let capa = escena.querySelector(`.trampas-capa.t-${side}`);
+  if (!capa) { capa = document.createElement('div'); capa.className = `trampas-capa t-${side}`; capa.setAttribute('aria-hidden', 'true'); escena.querySelector('#fx').before(capa); }
   const piezas = [];
   if (t?.rocas) {
     const pos = [[6, -30], [24, -120], [50, -70], [76, -130], [94, -35]];
@@ -1071,8 +1120,8 @@ async function lanzarBall(side, destino) {
   if (!reducido) {
     let n = 0;
     estela = setInterval(() => {
-      const r = ball.getBoundingClientRect(); const a = arena.getBoundingClientRect();
-      const ch = particula('chispa-ball', r.left - a.left + r.width / 2, r.top - a.top + r.height / 2);
+      const r = ball.getBoundingClientRect(); const a = escena.getBoundingClientRect(); const s = cam.s || 1;
+      const ch = particula('chispa-ball', (r.left - a.left + r.width / 2) / s, (r.top - a.top + r.height / 2) / s);
       anim(ch, [{ transform: 'translate(-50%,-50%) scale(1)', opacity: 0.9 }, { transform: 'translate(-50%,-50%) scale(0)', opacity: 0 }], { duration: 380 }).then(() => ch.remove());
       if (++n > 30) clearInterval(estela);
     }, 28);
@@ -1154,6 +1203,8 @@ async function animDebil(side) {
   sfx.debilitado();
   const espejo = img.classList.contains('espejo') ? ' scaleX(-1)' : '';
   const c = centro(side);
+  camara(1.18, c, 600, 'ease-in-out');
+  camaraLenta(700, 0.4);
   // 1) se desploma y pierde el color
   await anim(img, [
     { transform: `translateY(0)${espejo}`, filter: 'brightness(1)' },
@@ -1176,6 +1227,7 @@ async function animDebil(side) {
   ], { duration: 560, easing: 'ease-in' });
   if (reducido) rayo.remove();
   img.getAnimations?.().forEach((a) => a.cancel());
+  camaraNormal(500);
   img.classList.remove('visible');
   renderHp(side);
   await espera(300);
@@ -1340,6 +1392,7 @@ function botonMovimiento(m, n, yo, foe, b) {
 function mostrarMenu() {
   const b = estado.batalla;
   if (!b || b.terminada) return;
+  if (cam.s !== 1) camaraNormal(300);
   const yo = activo(b, estado.miLado);
   const foe = activo(b, otro(estado.miLado));
   $('#lcdTexto').textContent = `¿Qué debería hacer ${yo.nombre}?`;
@@ -1923,6 +1976,7 @@ async function arrancar() {
   renderEstante();
   prepararQR();
   precargarHojas();
+  precargarFormas('assets/fx/');
   db.escucharPartidas((p) => {
     const ul = $('#recientes');
     ul.querySelector('.vacio')?.remove();
