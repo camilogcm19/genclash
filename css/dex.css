@@ -93,18 +93,14 @@ h1, h2, h3 { letter-spacing: .01em; }
   box-shadow: inset 0 3px 8px rgba(0, 0, 0, .45), 0 1px 0 rgba(255, 255, 255, .25);
   color: #ffe9e6;
 }
-.dex-cara svg { width: 52px; height: 52px; display: block; overflow: visible; animation: flotar 3s ease-in-out infinite; }
+.rotom { display: block; image-rendering: pixelated; object-fit: contain; filter: drop-shadow(0 0 6px rgba(46, 224, 255, .55)); }
+.dex-cara .rotom { width: 52px; height: 52px; animation: flotar 3s ease-in-out infinite; }
 .dex-nombre { font: 700 1.15rem/1 var(--pixel); letter-spacing: .06em; }
-.dex-cara:hover svg { animation-duration: 1.2s; }
+.dex-cara:hover .rotom { animation-duration: 1.2s; }
 .dex-cara:focus-visible { outline: 3px solid var(--rayo); outline-offset: 3px; }
 @keyframes flotar { 50% { transform: translateY(-4px) rotate(-3deg); } }
-.m-antena { animation: antena 1.8s ease-in-out infinite; }
-@keyframes antena { 50% { fill: #fff6c2; } }
-.m-ojos { transform-origin: 40px 39px; animation: parpadear 4.6s infinite; }
-@keyframes parpadear { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.12); } }
-.feliz .m-ojos rect, .habla .m-ojos rect { fill: var(--rayo); }
-.feliz .m-ojos { animation: none; transform: scaleY(.55) translateY(-4px); }
-.feliz .m-boca, .habla .m-boca { d: path("M33 49 Q40 58 47 49"); stroke: var(--rayo); }
+.feliz .rotom, .voz.habla .voz-cara .rotom { animation: brinca .6s cubic-bezier(.2, 1.6, .4, 1) 2; filter: drop-shadow(0 0 10px var(--rayo)); }
+@keyframes brinca { 0%, 100% { transform: translateY(0) rotate(0); } 40% { transform: translateY(-9px) rotate(-8deg); } 70% { transform: translateY(0) rotate(6deg); } }
 
 /* ---------------- La pantalla ---------------- */
 .dex-pantalla {
@@ -176,7 +172,7 @@ main { padding-top: 6px; }
 .bajada { color: #a9c6dd; }
 .voz { display: flex; align-items: flex-start; gap: 12px; }
 .voz-cara { flex: none; width: 58px; height: 58px; display: grid; place-items: center; border-radius: 16px; background: rgba(46, 224, 255, .1); border: 1px solid rgba(46, 224, 255, .45); }
-.voz-cara svg { width: 46px; height: 46px; overflow: visible; animation: flotar 3s ease-in-out infinite; }
+.voz-cara .rotom { width: 50px; height: 50px; animation: flotar 3s ease-in-out infinite; }
 .voz-globo {
   position: relative; flex: 1; background: #04101f; border: 2px solid rgba(255, 210, 63, .75); border-radius: 16px; padding: 10px 14px 12px;
   box-shadow: 0 0 22px rgba(255, 210, 63, .12);
@@ -323,7 +319,8 @@ main { padding-top: 6px; }
 }
 .lcd::before { /* la mascota narra la batalla */
   content: ''; position: absolute; left: 12px; top: 50%; width: 40px; height: 40px; translate: 0 -50%;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Cline x1='40' y1='13' x2='40' y2='4' stroke='%2373e9ff' stroke-width='3.5' stroke-linecap='round'/%3E%3Ccircle cx='40' cy='5' r='4.5' fill='%23ffd23f'/%3E%3Crect x='9' y='13' width='62' height='56' rx='19' fill='%232bc4d6' stroke='%2373e9ff' stroke-width='3'/%3E%3Crect x='17' y='24' width='46' height='34' rx='11' fill='%23071324'/%3E%3Crect x='26' y='32' width='9' height='14' rx='4.5' fill='%237ff7ff'/%3E%3Crect x='45' y='32' width='9' height='14' rx='4.5' fill='%237ff7ff'/%3E%3Cpath d='M34 51 Q40 55 46 51' stroke='%237ff7ff' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  background: url("https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/479.gif") center / contain no-repeat;
+  image-rendering: pixelated;
   filter: drop-shadow(0 0 6px rgba(46, 224, 255, .45));
 }
 .lcd p { font-family: var(--pixel); font-weight: 600; text-shadow: 0 0 10px rgba(46, 224, 255, .35); }
@@ -379,7 +376,7 @@ main { padding-top: 6px; }
   .dex-tapa .dex-lado:first-child .dex-bocina { display: none; }
   .dex-lado.der .dex-bocina { display: none; }
   .dex-cara { justify-self: center; padding: 4px 12px 4px 6px; gap: 6px; border-radius: 14px; }
-  .dex-cara svg { width: 38px; height: 38px; }
+  .dex-cara .rotom { width: 40px; height: 40px; }
   .dex-nombre { font-size: .95rem; }
   .dex-leds i { width: 9px; height: 9px; }
   .dex-sync { font-size: .64rem; padding: 4px 7px; }
@@ -389,7 +386,7 @@ main { padding-top: 6px; }
   .dex-cruz { transform: scale(.8); }
   .intro { margin-top: 14px; padding: 14px; gap: 14px; border-radius: 18px; }
   .voz-cara { width: 48px; height: 48px; }
-  .voz-cara svg { width: 38px; height: 38px; }
+  .voz-cara .rotom { width: 40px; height: 40px; }
   .voz-globo p { font-size: .92rem; }
   .config { grid-template-columns: 1fr; gap: 10px; }
   .config .equipo-modo { grid-template-columns: 1fr 1fr; }
@@ -410,4 +407,4 @@ main { padding-top: 6px; }
   .dex-rotulo { display: none; }
   .dex-sync { display: none; }
 }
-html.reducido .dex-cara svg, html.reducido .voz-cara svg, html.reducido .dex-lente, html.reducido .m-ojos, html.reducido .m-antena, html.reducido .dex-leds i { animation: none; }
+html.reducido .rotom, html.reducido .dex-lente, html.reducido .dex-leds i { animation: none; }
