@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>GenClash · Batallas Pokémon por generación</title>
   <meta name="description" content="Elige una generación, recibe un equipo aleatorio y pelea por turnos. Datos de la PokeAPI, ranking en Supabase." />
-  <meta name="theme-color" content="#1d2142" />
+  <meta name="theme-color" content="#c81e22" />
   <link rel="icon" href="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600;700&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,500;0,600;0,700;1,700&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/dex.css" />
   <!-- Cliente oficial de Supabase (expone window.supabase) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script type="module" src="js/main.js"></script>
@@ -18,10 +19,28 @@
 <body>
   <a class="saltar" href="#contenido">Saltar al contenido</a>
 
+  <!-- Carcasa del GenDex: todo el juego vive dentro de la pantalla -->
+  <div class="dex">
+  <div class="dex-tapa">
+    <div class="dex-lado">
+      <span class="dex-bocina" aria-hidden="true"></span>
+      <span class="dex-leds" aria-hidden="true"><i></i><i></i><i></i></span>
+    </div>
+    <button class="dex-cara" id="dexCara" type="button" aria-label="Hablar con el GenDex">
+      <svg viewBox="0 0 80 80" aria-hidden="true"><line x1="40" y1="13" x2="40" y2="4" stroke="#0b2a40" stroke-width="3.5" stroke-linecap="round"/><circle class="m-antena" cx="40" cy="5" r="4.5" fill="#ffd23f"/><circle cx="5" cy="44" r="5.5" fill="#2bc4d6" stroke="#0b2a40" stroke-width="3"/><circle cx="75" cy="44" r="5.5" fill="#2bc4d6" stroke="#0b2a40" stroke-width="3"/><rect x="9" y="13" width="62" height="56" rx="19" fill="#2bc4d6" stroke="#0b2a40" stroke-width="3.5"/><path d="M14 30 Q15 18 28 17 L52 17 Q65 18 66 30" stroke="#a6f6ff" stroke-width="3" fill="none" stroke-linecap="round" opacity=".7"/><rect x="17" y="24" width="46" height="34" rx="11" fill="#071324"/><g class="m-ojos"><rect x="26" y="32" width="9" height="14" rx="4.5" fill="#7ff7ff"/><rect x="45" y="32" width="9" height="14" rx="4.5" fill="#7ff7ff"/></g><path class="m-boca" d="M34 51 Q40 55 46 51" stroke="#7ff7ff" stroke-width="2.6" fill="none" stroke-linecap="round"/></svg>
+      <span class="dex-nombre">GenDex</span>
+    </button>
+    <div class="dex-lado der">
+      <span class="dex-sync" id="dexSync">En línea</span>
+      <span class="dex-bocina" aria-hidden="true"></span>
+    </div>
+  </div>
+  <div class="dex-pantalla">
+
   <header class="barra">
     <button class="marca" data-ir="inicio" aria-label="Ir al inicio">
       <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" alt="" width="30" height="30" />
-      <span>GenClash</span>
+      <span>Gen<b>Clash</b></span>
     </button>
     <nav class="barra-acciones">
       <span class="conexion" id="conexion" title="Estado de la base de datos"></span>
@@ -80,8 +99,17 @@
     <!-- ======================= INICIO ======================= -->
     <section class="pantalla" id="pantalla-inicio" aria-labelledby="titulo-inicio">
       <div class="intro">
-        <h1 id="titulo-inicio">Hola, <span id="saludoUsuario">entrenador</span>.</h1>
-        <p class="bajada">Cada partida arma dos equipos al azar desde la PokeAPI, con movimientos, tipos y estadísticas reales. Gana y sube en el ranking.</p>
+        <div class="intro-txt">
+          <h1 id="titulo-inicio">¡Hola, <span id="saludoUsuario">entrenador</span>!</h1>
+          <p class="bajada">Cada partida arma dos equipos al azar desde la PokeAPI, con movimientos, tipos y estadísticas reales. Gana y sube en el ranking.</p>
+        </div>
+        <div class="voz">
+          <span class="voz-cara"><svg viewBox="0 0 80 80" aria-hidden="true"><line x1="40" y1="13" x2="40" y2="4" stroke="#0b2a40" stroke-width="3.5" stroke-linecap="round"/><circle class="m-antena" cx="40" cy="5" r="4.5" fill="#ffd23f"/><circle cx="5" cy="44" r="5.5" fill="#2bc4d6" stroke="#0b2a40" stroke-width="3"/><circle cx="75" cy="44" r="5.5" fill="#2bc4d6" stroke="#0b2a40" stroke-width="3"/><rect x="9" y="13" width="62" height="56" rx="19" fill="#2bc4d6" stroke="#0b2a40" stroke-width="3.5"/><path d="M14 30 Q15 18 28 17 L52 17 Q65 18 66 30" stroke="#a6f6ff" stroke-width="3" fill="none" stroke-linecap="round" opacity=".7"/><rect x="17" y="24" width="46" height="34" rx="11" fill="#071324"/><g class="m-ojos"><rect x="26" y="32" width="9" height="14" rx="4.5" fill="#7ff7ff"/><rect x="45" y="32" width="9" height="14" rx="4.5" fill="#7ff7ff"/></g><path class="m-boca" d="M34 51 Q40 55 46 51" stroke="#7ff7ff" stroke-width="2.6" fill="none" stroke-linecap="round"/></svg></span>
+          <div class="voz-globo">
+            <span class="voz-quien">El GenDex dice</span>
+            <p id="vozTexto" aria-live="polite">¡Bzzt! Elige una región y te preparo la batalla.</p>
+          </div>
+        </div>
       </div>
 
       <form class="config" id="formJugar" autocomplete="off">
@@ -109,6 +137,7 @@
 
       <div class="cta-fija">
         <button class="btn-primario" id="btnBuscar" form="formJugar" type="submit">
+          <svg class="rayo-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2 4 13.5h6.5L9.5 22 20 9.5h-6.6z"/></svg>
           <span id="txtBuscar">Buscar partida</span>
         </button>
       </div>
@@ -252,6 +281,13 @@
       </div>
     </section>
   </main>
+  </div>
+  <div class="dex-base">
+    <button class="dex-lente" id="dexLente" type="button" aria-label="Mostrar el código QR del juego"><i></i></button>
+    <span class="dex-rotulo">Toca la lente para ver el código QR</span>
+    <span class="dex-cruz" aria-hidden="true"><i></i><i></i></span>
+  </div>
+  </div>
 
   <footer class="pie">
     <p>Datos y sprites: <a href="https://pokeapi.co" target="_blank" rel="noopener">PokeAPI</a>. Base de datos: <a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a>. Proyecto escolar sin fines de lucro; Pokémon y sus nombres son marcas de Nintendo, Game Freak y The Pokémon Company.</p>

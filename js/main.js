@@ -218,7 +218,39 @@ function elegirGen(id) {
   $$('.cartucho').forEach((c, i) => c.setAttribute('aria-checked', String(LISTA_GENS[i].id === id)));
   sfx.seleccion();
   actualizarCTA();
+  const g = genActual();
+  voz(g.id === 0 ? '¡Bzzt! Los 1,025 Pokémon están en el escáner. ¡Te puede tocar cualquiera!'
+    : g.id === LEGENDARIOS.id ? `¡Alerta máxima! ${LEGENDARIOS.lista.length} legendarios cargados. Esto va a estar fuerte.`
+    : `¡Bzzt! Datos de ${g.region} (${g.año}) cargados y listos.`);
 }
+
+// ---------- La voz del GenDex (la carcasa del juego) ----------
+function voz(texto) {
+  const p = $('#vozTexto');
+  if (!p || p.textContent === texto) return;
+  p.textContent = texto;
+  const v = p.closest('.voz');
+  v.classList.remove('habla'); void v.offsetWidth; v.classList.add('habla');
+  $('#dexCara').classList.add('feliz');
+  clearTimeout(voz.t); voz.t = setTimeout(() => $('#dexCara').classList.remove('feliz'), 1400);
+}
+const FRASES_DEX = [
+  '¡Bzzt! ¡Eso hace cosquillas! ¿Listo para pelear?',
+  'Consejo: el tipo de un ataque importa más que su poder. ¡Busca el ×2!',
+  'Los ataques del mismo tipo que tu Pokémon pegan 50% más fuerte.',
+  'Si el rival es más rápido, a veces conviene cambiar de Pokémon.',
+  '¡Bzzt! Mi base de datos de todas las regiones está al 100%.',
+  'En 6 vs 6 aguanta más tu equipo: piensa bien a quién sacas primero.',
+];
+$('#dexCara').addEventListener('click', () => {
+  sfx.seleccion();
+  const enInicio = $('#pantalla-inicio').classList.contains('activa');
+  const lista = FRASES_DEX.filter((f) => f !== $('#vozTexto').textContent);
+  const frase = lista[Math.floor(Math.random() * lista.length)];
+  if (enInicio) voz(frase);
+  else { toast(frase, 3200); const c = $('#dexCara'); c.classList.add('feliz'); setTimeout(() => c.classList.remove('feliz'), 1400); }
+});
+$('#dexLente').addEventListener('click', () => $('#btnQR').click());
 
 function actualizarCTA() {
   const g = genActual();
@@ -230,6 +262,11 @@ function actualizarCTA() {
 
 $$('input[name=modo]').forEach((r) => r.addEventListener('change', () => {
   estado.modo = r.value; localStorage.setItem('gc:modo', r.value); sfx.click(); actualizarCTA();
+  voz(r.value === 'pvp' ? '¡Bzzt! Buscaré a otra persona conectada para que se enfrenten.' : 'Modo práctica: peleas contra mi inteligencia artificial. ¡No me la pongas fácil!');
+}));
+$$('input[name=tamano]').forEach((r) => r.addEventListener('change', () => {
+  sfx.click();
+  voz(r.value === '3' ? 'Formato 3 vs 3: batallas rápidas, cada Pokémon cuenta.' : 'Formato 6 vs 6: el equipo completo, como en los juegos.');
 }));
 
 // Navegación con flechas dentro del estante (radiogroup)
@@ -252,6 +289,8 @@ async function cargarTablero() {
   const conexion = $('#conexion');
   conexion.classList.toggle('online', db.enLinea());
   conexion.textContent = db.enLinea() ? 'Supabase en línea' : 'Modo local';
+  $('#dexSync').textContent = db.enLinea() ? 'Sincronizado' : 'Modo local';
+  $('#dexSync').classList.toggle('off', !db.enLinea());
 
   try {
     const r = await db.obtenerRanking();
@@ -1908,6 +1947,7 @@ $('#eqListo').addEventListener('click', async () => {
 });
 $$('input[name=equipo]').forEach((r) => r.addEventListener('change', () => {
   estado.equipoModo = r.value; localStorage.setItem('gc:equipoModo', r.value); sfx.click(); actualizarCTA();
+  voz(r.value === 'mio' ? '¡Bzzt! Usaré el equipo que tú armaste, con tus ataques.' : 'Te armo un equipo al azar de la generación que elijas.');
   if (r.value === 'mio' && !equipoValidos().length) abrirEditor();
 }));
 

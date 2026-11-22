@@ -884,3 +884,4 @@ html.reducido .arena::after { animation: none !important; }
 @keyframes fondo-viento { to { transform: translateX(-42px); } }
 @keyframes fondo-pulso { 0% { transform: scale(1); } 100% { transform: scale(1.12); } }
 @keyframes fondo-fantasma { from { transform: translate(-3%, 2%); } to { transform: translate(3%, -2%); } }
+
